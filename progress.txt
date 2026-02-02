@@ -53,6 +53,8 @@
 - MatchResult dataclass: canonical_id, match_type, score — used as return type for all match methods
 - FacilityMatcher indexes both aliases AND canonical_name (normalized) for each facility
 - Both input and stored aliases are normalized via FacilityNormalizer for case-insensitive comparison
+- FacilityMatcher `fuzzy_threshold` param defaults to 0.85; rapidfuzz `fuzz.token_sort_ratio` returns 0-100, divide by 100 for 0-1 range
+- FacilityMatcher._fuzzy_candidates is list of (normalized_name, canonical_id) tuples built from both canonical_name and aliases at construction time
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -104,7 +106,7 @@
 - [x] US-035: Implement string normalization pipeline (priority 35)
 - [x] US-036: Implement exact alias matching (priority 36)
 - [x] US-037: Implement NPI/CCN matching (priority 37)
-- [ ] US-038: Implement fuzzy matching (priority 38)
+- [x] US-038: Implement fuzzy matching (priority 38)
 - [ ] US-039: Handle unresolved facilities (priority 39)
 - [ ] US-040: Implement facility registry (priority 40)
 - [ ] US-041: Implement FacilityNormalizationStage (priority 41)
@@ -742,4 +744,20 @@
   - match_npi/match_ccn are separate methods (not combined) to keep match_type clear and allow callers to control cascade order
   - 21 tests covering: NPI matching (9 — match, no match, None, empty, type, score, whitespace), CCN matching (9 — same pattern), precedence (3 — exact vs NPI, NPI-only facilities, CCN-only facilities)
   - Total test count: 572 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-038
+- Implemented: Fuzzy matching via rapidfuzz `token_sort_ratio` in `asre/facility/matcher.py`
+- Added `fuzzy_threshold` param to FacilityMatcher constructor (default 0.85, backward compatible)
+- `match_fuzzy()` method normalizes input, compares against all fuzzy candidates, returns best match above threshold
+- `_fuzzy_candidates` list built at construction from both canonical names and aliases (same normalized values as alias_index)
+- rapidfuzz `token_sort_ratio` returns 0-100, normalized to 0-1 by dividing by 100
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_fuzzy_matching.py (new)
+- **Learnings for future iterations:**
+  - rapidfuzz `fuzz.token_sort_ratio(s1, s2)` returns score 0-100, not 0-1 — must normalize
+  - Fuzzy candidates are built alongside alias_index in the same constructor loop to avoid double normalization
+  - `fuzzy_threshold` has a default value so existing callers (from US-036/037) aren't broken
+  - Best-match selection: iterate all candidates, track best score/id, check threshold at end
+  - 14 tests covering: basic matching (3), score behavior (3), best selection (1), edge cases (5), alias+canonical comparison (2)
+  - Total test count: 586 passed + 16 skipped (integration tests skip without Postgres)
 ---

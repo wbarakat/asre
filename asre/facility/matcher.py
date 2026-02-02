@@ -1,14 +1,17 @@
-"""Facility matching with exact alias, NPI, and CCN lookup.
+"""Facility matching with exact alias, NPI, CCN, and fuzzy lookup.
 
 Matches normalized input strings against known facility aliases
 loaded from FacilityAliasConfig. Both input and aliases are
 normalized via FacilityNormalizer for case-insensitive comparison.
 NPI and CCN identifiers provide direct lookup when available.
+Fuzzy matching via rapidfuzz token_sort_ratio as fallback.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from rapidfuzz import fuzz
 
 from asre.config.facility_alias_schema import FacilityAliasConfig
 from asre.facility.normalizer import FacilityNormalizer
@@ -34,24 +37,32 @@ class FacilityMatcher:
         self,
         alias_config: FacilityAliasConfig,
         normalizer: FacilityNormalizer,
+        fuzzy_threshold: float = 0.85,
     ) -> None:
         self._normalizer = normalizer
+        self._fuzzy_threshold = fuzzy_threshold
         # Build normalized alias -> canonical_id lookup
         self._alias_index: dict[str, str] = {}
         # Build NPI -> canonical_id lookup
         self._npi_index: dict[str, str] = {}
         # Build CCN -> canonical_id lookup
         self._ccn_index: dict[str, str] = {}
+        # Build list of (normalized_name, canonical_id) for fuzzy comparison
+        self._fuzzy_candidates: list[tuple[str, str]] = []
         for facility in alias_config.facilities:
             # Index the canonical_name itself (normalized)
             normalized_name = normalizer.normalize(facility.canonical_name)
             if normalized_name:
                 self._alias_index[normalized_name] = facility.canonical_id
+                self._fuzzy_candidates.append((normalized_name, facility.canonical_id))
             # Index each alias (normalized)
             for alias in facility.aliases:
                 normalized_alias = normalizer.normalize(alias)
                 if normalized_alias:
                     self._alias_index[normalized_alias] = facility.canonical_id
+                    self._fuzzy_candidates.append(
+                        (normalized_alias, facility.canonical_id)
+                    )
             # Index NPI if present
             if facility.npi:
                 self._npi_index[facility.npi.strip()] = facility.canonical_id
@@ -125,6 +136,48 @@ class FacilityMatcher:
                 canonical_id=canonical_id,
                 match_type="ccn",
                 score=1.0,
+            )
+
+        return None
+
+    def match_fuzzy(self, facility_name: str | None) -> MatchResult | None:
+        """Attempt fuzzy match using rapidfuzz token_sort_ratio.
+
+        Compares normalized input against all known facility names and
+        aliases. Accepts match if score >= fuzzy_threshold. If multiple
+        facilities score above threshold, selects the highest score.
+
+        Args:
+            facility_name: Raw facility name string to match.
+
+        Returns:
+            MatchResult with canonical_id if matched, None otherwise.
+        """
+        if not facility_name:
+            return None
+
+        normalized = self._normalizer.normalize(facility_name)
+        if not normalized:
+            return None
+
+        if not self._fuzzy_candidates:
+            return None
+
+        best_score = 0.0
+        best_canonical_id: str | None = None
+
+        for candidate_name, canonical_id in self._fuzzy_candidates:
+            # rapidfuzz token_sort_ratio returns 0-100
+            score = fuzz.token_sort_ratio(normalized, candidate_name) / 100.0
+            if score > best_score:
+                best_score = score
+                best_canonical_id = canonical_id
+
+        if best_canonical_id is not None and best_score >= self._fuzzy_threshold:
+            return MatchResult(
+                canonical_id=best_canonical_id,
+                match_type="fuzzy",
+                score=best_score,
             )
 
         return None
