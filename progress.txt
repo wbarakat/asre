@@ -103,6 +103,11 @@
 - StitchStage stores encounters on `stage.encounters` and metadata on `stage.encounter_metadata`; reads encounter_stitching config from context.config
 - StitchStage._build_stitcher() selectively passes config kwargs to EncounterStitcher — missing keys use EncounterStitcher defaults
 - Test timestamps for stitching tests must be within 48h (default time_window_hours) or events will produce separate encounters
+- Reconciler in `asre/reconcile/reconciler.py`: reconcile_timestamps(encounter) returns ReconciledTimestamps with admit_ts, admit_source_priority, discharge_ts, discharge_source_priority
+- ReconciledTimestamps dataclass: admit_ts (datetime), admit_source_priority (str), discharge_ts (datetime|None), discharge_source_priority (str|None)
+- Reconciler._select_timestamp(events, event_types) groups matching events by source type, picks highest priority source, returns earliest timestamp from that source
+- _extract_source_type() helper shared pattern: prefix-based (claims/auth/adt) extraction from source_system name
+- _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES sets defined at module level in reconciler.py (same values as encounter_stitcher.py)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -1118,4 +1123,16 @@
   - Dedup config (match_fields, time_tolerance_minutes) comes from `deduplication` config section
   - Event-level dedup runs per-encounter; encounter-level dedup runs across all encounters
   - events_after counts non-duplicate events (role_in_encounter != "duplicate") since duplicates are kept for audit
+---
+
+## 2026-02-02 - US-058
+- What was implemented: Reconciler class with timestamp selection by source priority
+- Files changed:
+  - `asre/reconcile/reconciler.py` (new) — Reconciler class, ReconciledTimestamps dataclass, _extract_source_type helper
+  - `tests/unit/test_reconciler.py` (new) — 6 tests covering ADT>claims priority, discharge selection, claims-only, custom priority, open encounters, auth lowest priority
+- **Learnings for future iterations:**
+  - Reconciler follows same constructor pattern as EncounterStitcher: configurable via kwargs with sensible defaults
+  - _extract_source_type is duplicated from Deduplicator._source_type (static method) — consider extracting to shared utility if needed again
+  - ReconciledTimestamps is a dataclass (not dict) for type safety — downstream stages should use its fields directly
+  - Tests use _make_event and _make_encounter helpers defined at test module level for clean test construction
 ---
