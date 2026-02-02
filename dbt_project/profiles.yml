@@ -1,0 +1,12 @@
+asre:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('ASRE_DB_HOST', 'localhost') }}"
+      port: "{{ env_var('ASRE_DB_PORT', '5432') | int }}"
+      user: "{{ env_var('ASRE_DB_USER', 'postgres') }}"
+      password: "{{ env_var('ASRE_DB_PASSWORD', 'postgres') }}"
+      dbname: "{{ env_var('ASRE_DB_NAME', 'asre_dev') }}"
+      schema: public
+      threads: 4
