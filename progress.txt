@@ -103,7 +103,7 @@
 ## Phase 5: Facility Normalization (US-035 to US-042)
 - [x] US-035: Implement string normalization pipeline (priority 35)
 - [x] US-036: Implement exact alias matching (priority 36)
-- [ ] US-037: Implement NPI/CCN matching (priority 37)
+- [x] US-037: Implement NPI/CCN matching (priority 37)
 - [ ] US-038: Implement fuzzy matching (priority 38)
 - [ ] US-039: Handle unresolved facilities (priority 39)
 - [ ] US-040: Implement facility registry (priority 40)
@@ -727,4 +727,19 @@
   - match_exact returns None for empty/None input (normalizer returns "" for these, which is falsy)
   - 17 tests covering: construction (2), exact matching (9), MatchResult fields (3), normalization before match (3)
   - Total test count: 551 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-037
+- Implemented: NPI and CCN matching in `asre/facility/matcher.py` via `match_npi()` and `match_ccn()` methods
+- FacilityMatcher constructor now builds three indexes: alias (normalized name), NPI, and CCN
+- Both methods strip whitespace from input before lookup
+- NPI/CCN matches return MatchResult with match_type='npi'/'ccn' and score=1.0
+- Facilities without NPI/CCN are simply not indexed (no false positives)
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_npi_ccn_matching.py (new)
+- **Learnings for future iterations:**
+  - NPI/CCN indexes are simple dict[str, str] lookups — no normalization needed (identifiers are exact)
+  - Whitespace stripping on both index build and lookup prevents mismatches from trailing spaces
+  - match_npi/match_ccn are separate methods (not combined) to keep match_type clear and allow callers to control cascade order
+  - 21 tests covering: NPI matching (9 — match, no match, None, empty, type, score, whitespace), CCN matching (9 — same pattern), precedence (3 — exact vs NPI, NPI-only facilities, CCN-only facilities)
+  - Total test count: 572 passed + 16 skipped (integration tests skip without Postgres)
 ---
