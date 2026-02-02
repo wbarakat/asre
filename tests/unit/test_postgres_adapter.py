@@ -231,9 +231,9 @@ class TestPostgresAdapterWriteRecords:
 
 
 class TestPostgresAdapterWatermark:
-    """Test watermark methods (basic stubs since full watermark is US-024)."""
+    """Test watermark methods (US-024: Implement watermark management)."""
 
-    def test_get_watermark_returns_none_by_default(self) -> None:
+    def _make_adapter_with_mock(self) -> tuple[Any, MagicMock]:
         from asre.ingest.postgres import PostgresAdapter
 
         config: dict[str, Any] = {
@@ -246,32 +246,89 @@ class TestPostgresAdapterWatermark:
         }
         adapter = PostgresAdapter(config)
         mock_connection = MagicMock()
+        adapter._connection = mock_connection  # type: ignore[attr-defined]
+        return adapter, mock_connection
+
+    def test_get_watermark_returns_none_when_no_row(self) -> None:
+        """get_watermark returns None when no watermark exists for a source."""
+        adapter, mock_conn = self._make_adapter_with_mock()
         mock_result = MagicMock()
         mock_result.fetchone.return_value = None
-        mock_connection.execute.return_value = mock_result
-        adapter._connection = mock_connection  # type: ignore[attr-defined]
+        mock_conn.execute.return_value = mock_result
 
         result = adapter.get_watermark("test_source")
         assert result is None
 
-    def test_set_watermark_callable(self) -> None:
-        from asre.ingest.postgres import PostgresAdapter
+    def test_get_watermark_uses_correct_key_format(self) -> None:
+        """get_watermark queries asre_metadata with key='watermark_{source_name}'."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = None
+        mock_conn.execute.return_value = mock_result
 
-        config: dict[str, Any] = {
-            "host": "localhost",
-            "port": "5432",
-            "database": "testdb",
-            "user": "testuser",
-            "password": "testpass",
-            "schema": "public",
-        }
-        adapter = PostgresAdapter(config)
-        mock_connection = MagicMock()
-        adapter._connection = mock_connection  # type: ignore[attr-defined]
+        adapter.get_watermark("adt_vendor_x")
 
-        now = datetime.now(timezone.utc)
-        adapter.set_watermark("test_source", now)
-        assert mock_connection.execute.called
+        call_args = mock_conn.execute.call_args
+        params = call_args[0][1]
+        assert params["key"] == "watermark_adt_vendor_x"
+
+    def test_get_watermark_returns_datetime_when_row_exists(self) -> None:
+        """get_watermark parses stored ISO string back to datetime."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = ("2026-01-15T10:30:00+00:00",)
+        mock_conn.execute.return_value = mock_result
+
+        result = adapter.get_watermark("adt_vendor_x")
+        assert result is not None
+        assert result == datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+    def test_set_watermark_stores_iso_format(self) -> None:
+        """set_watermark stores the timestamp as ISO string in asre_metadata."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        ts = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+        adapter.set_watermark("adt_vendor_x", ts)
+
+        call_args = mock_conn.execute.call_args
+        params = call_args[0][1]
+        assert params["key"] == "watermark_adt_vendor_x"
+        assert params["value"] == ts.isoformat()
+
+    def test_set_watermark_commits(self) -> None:
+        """set_watermark commits the transaction."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        ts = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+        adapter.set_watermark("adt_vendor_x", ts)
+        mock_conn.commit.assert_called_once()
+
+    def test_watermarks_are_per_source_keys(self) -> None:
+        """Different sources use different keys in asre_metadata."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        ts = datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        adapter.set_watermark("adt_vendor_x", ts)
+        key1 = mock_conn.execute.call_args[0][1]["key"]
+
+        adapter.set_watermark("claims_clearinghouse", ts)
+        key2 = mock_conn.execute.call_args[0][1]["key"]
+
+        assert key1 == "watermark_adt_vendor_x"
+        assert key2 == "watermark_claims_clearinghouse"
+        assert key1 != key2
+
+    def test_set_watermark_uses_upsert(self) -> None:
+        """set_watermark SQL includes ON CONFLICT for upsert behavior."""
+        adapter, mock_conn = self._make_adapter_with_mock()
+        ts = datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        adapter.set_watermark("adt_vendor_x", ts)
+
+        call_args = mock_conn.execute.call_args
+        sql_text = str(call_args[0][0])
+        assert "ON CONFLICT" in sql_text
+        assert "DO UPDATE" in sql_text
 
 
 class TestPostgresAdapterConnectionUrl:
