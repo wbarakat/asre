@@ -29,7 +29,7 @@
 
 ## Phase 2: Configuration System (US-012 to US-017)
 - [x] US-012: Define global config Pydantic schema (priority 12)
-- [ ] US-013: Define source config Pydantic schema (priority 13)
+- [x] US-013: Define source config Pydantic schema (priority 13)
 - [ ] US-014: Define facility alias config schema (priority 14)
 - [ ] US-015: Implement YAML config loader with env var substitution (priority 15)
 - [ ] US-016: Create example customer config (priority 16)
@@ -289,4 +289,18 @@
   - GlobalConfig requires customer + warehouse, all other sub-configs have defaults
   - 28 tests covering: all 10 sub-configs individually + GlobalConfig with valid/invalid/override scenarios
   - Total test count: 95 (67 existing + 28 new)
+---
+
+## 2026-02-02 - US-013
+- Implemented: Source config Pydantic schema in `asre/config/source_schema.py` with 9 Pydantic models
+- Models: SourceDefinition, FieldMappings, EventTypeRules, PairedEventConfig, PairedEvents, PatientClassRules, AuthStatusMap, FiltersConfig, SourceConfig
+- SourceConfig.type uses `Literal["adt", "claims", "auth"]` for type validation
+- model_validator enforces: claims must have paired_events, auth must have auth_status_map
+- Files changed: asre/config/source_schema.py (new), tests/unit/test_source_config_schema.py (new)
+- **Learnings for future iterations:**
+  - Use `Literal["adt", "claims", "auth"]` for enum-like type validation in Pydantic v2
+  - Use `@model_validator(mode="after")` for cross-field validation (e.g., type-dependent required fields)
+  - PairedEvents needs a sub-model (PairedEventConfig) for each side (admit/discharge)
+  - 33 tests covering: all 8 sub-models individually + SourceConfig for each source type (ADT, claims, auth) + validation rules + optional fields
+  - Total test count: 128 (95 existing + 33 new)
 ---
