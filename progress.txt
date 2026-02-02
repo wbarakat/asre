@@ -21,6 +21,9 @@
 - For mypy strict: use explicit `list[dict[str, Any]]` type annotation when list contains dicts with heterogeneous values (None, missing keys)
 - Integration test fixtures: use `Generator[T, None, None]` return type for yield fixtures (mypy strict), use `pytest.skip()` when Postgres unavailable
 - Integration test Postgres config: `ASRE_TEST_PG_*` env vars with defaults (host=localhost, port=5432, database=asre_test, user=postgres, password=postgres)
+- IngestStage stores raw records on `stage.raw_records` (list of dicts), not in EventBatch.events (those are for CanonicalEvents)
+- IngestStage annotates each record with `_raw_payload`, `_source_name`, `_source_type` for downstream canonicalize routing
+- Defensive copy before annotation: `dict(record)` before adding metadata keys to avoid mutating adapter-returned dicts
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -54,8 +57,8 @@
 - [x] US-021: Implement incremental mode with lookback buffer (priority 21)
 - [x] US-022: Implement source_record_id dedup on ingest (priority 22)
 - [x] US-023: Implement exclude filters (priority 23)
-- [ ] US-024: Implement watermark management (priority 24)
-- [ ] US-025: Implement IngestStage (priority 25)
+- [x] US-024: Implement watermark management (priority 24)
+- [x] US-025: Implement IngestStage (priority 25)
 - [ ] US-026: Implement basic migration infrastructure (priority 26)
 
 ## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
@@ -471,4 +474,35 @@
   - `_pg_config()` reads from `ASRE_TEST_PG_*` env vars with sensible defaults for local dev
   - 6 integration tests covering: A08/A31 exclusion, non-matching kept, no filter returns all, single event type, incremental mode combo, non-matching filter
   - Total test count: 263 passed + 6 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-024
+- Implemented: Watermark management integration tests and expanded unit tests for watermark methods
+- Core watermark logic (get_watermark, set_watermark, asre_metadata table, per-source keys, upsert) was already implemented in `asre/ingest/postgres.py` from US-019
+- Added 5 integration tests verifying real Postgres watermark roundtrip, per-source isolation, upsert behavior, and storage format
+- Expanded unit tests from 2 basic stubs to 8 thorough tests covering key format, ISO serialization, commit behavior, per-source keys, upsert SQL
+- Files changed: tests/integration/test_watermark_management.py (new), tests/unit/test_postgres_adapter.py (modified)
+- **Learnings for future iterations:**
+  - Watermark key format: `watermark_{source_name}` in asre_metadata table
+  - Watermark value stored as ISO 8601 string, parsed back via `datetime.fromisoformat()`
+  - `ON CONFLICT (key) DO UPDATE SET value = :value` for upsert behavior in Postgres
+  - Integration test fixture pattern: `metadata_table` fixture creates/drops asre_metadata table
+  - Total test count: 268 passed + 11 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-025
+- Implemented: IngestStage in `asre/ingest/stage.py` implementing PipelineStage interface
+- IngestStage iterates over all configured sources, builds queries via IngestQueryBuilder, reads records via adapter, deduplicates by source_record_id
+- Raw records stored on `stage.raw_records` (not in EventBatch.events, since these are pre-canonical dicts)
+- Each record annotated with `_raw_payload` (defensive copy of original), `_source_name`, `_source_type` for downstream canonicalize routing
+- StageMetrics tracks records_in (from source, pre-dedup), records_out (post-dedup), errors (source read failures)
+- Source read failures are caught and logged, incrementing error count without halting pipeline
+- Files changed: asre/ingest/stage.py (new), tests/unit/test_ingest_stage.py (new)
+- **Learnings for future iterations:**
+  - IngestStage stores results on `self.raw_records` rather than EventBatch.events since raw dicts aren't CanonicalEvents yet
+  - Must make defensive copy of record dict (`dict(record)`) BEFORE adding metadata keys (`_raw_payload`, `_source_name`, `_source_type`) to avoid mutating adapter-returned dicts
+  - PipelineContext.config carries `adapter`, `sources`, and `schedule` as dict keys — IngestStage reads these directly
+  - `source_record_id` field name comes from `field_mappings.source_record_id` in source config (the column name in the source table, not the canonical field name)
+  - 16 tests covering: interface (2), orchestration (7), metrics (4), query building (3)
+  - Total test count: 284 passed + 11 skipped (integration tests skip without Postgres)
 ---
