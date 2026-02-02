@@ -9,7 +9,8 @@ Fuzzy matching via rapidfuzz token_sort_ratio as fallback.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz
 
@@ -24,6 +25,7 @@ class MatchResult:
     canonical_id: str
     match_type: str
     score: float
+    flags: list[str] = field(default_factory=list)
 
 
 class FacilityMatcher:
@@ -181,3 +183,69 @@ class FacilityMatcher:
             )
 
         return None
+
+    def resolve_or_create(
+        self,
+        facility_name: str | None,
+        npi: str | None = None,
+        ccn: str | None = None,
+    ) -> MatchResult | None:
+        """Try all match tiers; if none match, create a new facility record.
+
+        Cascade order: exact alias -> NPI -> CCN -> fuzzy -> create new.
+
+        New facilities are auto-generated with a unique canonical_id,
+        flagged FACILITY_NEW_UNREVIEWED, and added to the alias index
+        so subsequent events with the same normalized name reuse them.
+
+        Args:
+            facility_name: Raw facility name string.
+            npi: Optional NPI from source record.
+            ccn: Optional CCN from source record.
+
+        Returns:
+            MatchResult if resolved or created, None for empty input.
+        """
+        if not facility_name or not facility_name.strip():
+            return None
+
+        # Tier 1: Exact alias match
+        result = self.match_exact(facility_name)
+        if result is not None:
+            return result
+
+        # Tier 2: NPI match
+        if npi:
+            result = self.match_npi(npi)
+            if result is not None:
+                return result
+
+        # Tier 3: CCN match
+        if ccn:
+            result = self.match_ccn(ccn)
+            if result is not None:
+                return result
+
+        # Tier 4: Fuzzy match
+        result = self.match_fuzzy(facility_name)
+        if result is not None:
+            return result
+
+        # Tier 5: Create new facility
+        normalized = self._normalizer.normalize(facility_name)
+        if not normalized:
+            return None
+
+        canonical_id = f"FAC_{uuid.uuid4().hex[:12].upper()}"
+
+        # Add to alias index so subsequent events with same normalized name reuse it
+        self._alias_index[normalized] = canonical_id
+        # Add to fuzzy candidates for future fuzzy matching
+        self._fuzzy_candidates.append((normalized, canonical_id))
+
+        return MatchResult(
+            canonical_id=canonical_id,
+            match_type="new",
+            score=0.0,
+            flags=["FACILITY_NEW_UNREVIEWED"],
+        )

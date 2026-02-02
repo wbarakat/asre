@@ -55,6 +55,9 @@
 - Both input and stored aliases are normalized via FacilityNormalizer for case-insensitive comparison
 - FacilityMatcher `fuzzy_threshold` param defaults to 0.85; rapidfuzz `fuzz.token_sort_ratio` returns 0-100, divide by 100 for 0-1 range
 - FacilityMatcher._fuzzy_candidates is list of (normalized_name, canonical_id) tuples built from both canonical_name and aliases at construction time
+- FacilityMatcher.resolve_or_create() cascades: exact -> NPI -> CCN -> fuzzy -> create new; new facilities get FAC_{uuid} IDs and FACILITY_NEW_UNREVIEWED flag
+- MatchResult has `flags: list[str]` field (default empty list) for carrying metadata like FACILITY_NEW_UNREVIEWED
+- New runtime facilities are added to both _alias_index and _fuzzy_candidates so subsequent events reuse them (no duplicates)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -107,7 +110,7 @@
 - [x] US-036: Implement exact alias matching (priority 36)
 - [x] US-037: Implement NPI/CCN matching (priority 37)
 - [x] US-038: Implement fuzzy matching (priority 38)
-- [ ] US-039: Handle unresolved facilities (priority 39)
+- [x] US-039: Handle unresolved facilities (priority 39)
 - [ ] US-040: Implement facility registry (priority 40)
 - [ ] US-041: Implement FacilityNormalizationStage (priority 41)
 - [ ] US-042: Add facility CLI commands (priority 42)
@@ -760,4 +763,20 @@
   - Best-match selection: iterate all candidates, track best score/id, check threshold at end
   - 14 tests covering: basic matching (3), score behavior (3), best selection (1), edge cases (5), alias+canonical comparison (2)
   - Total test count: 586 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-039
+- Implemented: Unresolved facility handling in `asre/facility/matcher.py` via `resolve_or_create()` method
+- Added `flags: list[str]` field to `MatchResult` dataclass (default empty list, backward compatible)
+- `resolve_or_create()` cascades through all match tiers: exact alias -> NPI -> CCN -> fuzzy -> create new
+- New facilities get auto-generated `FAC_{uuid}` canonical_id, flagged `FACILITY_NEW_UNREVIEWED`
+- New facility's normalized name added to `_alias_index` and `_fuzzy_candidates` at runtime so subsequent events with same normalized name reuse the facility (no duplicates)
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_unresolved_facilities.py (new)
+- **Learnings for future iterations:**
+  - `resolve_or_create` is the primary entry point for facility resolution — downstream stages should use this instead of calling individual match methods
+  - Runtime-created facilities are added to both `_alias_index` and `_fuzzy_candidates` to enable both exact and fuzzy reuse
+  - `MatchResult.flags` field uses `field(default_factory=list)` — safe mutable default in dataclass
+  - Second call with same normalized name hits `_alias_index` and returns match_type='exact' (not 'new')
+  - 19 tests covering: creation (5), reuse (4), alias indexing (2), cascade (5), edge cases (3)
+  - Total test count: 605 passed + 16 skipped (integration tests skip without Postgres)
 ---
