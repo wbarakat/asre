@@ -1265,3 +1265,20 @@
   - Use `pytest.approx()` for float comparisons involving subtraction (floating point precision issues).
   - Pre-existing mypy errors (12 in 6 files) exist in the repo from earlier stories; new code should be verified independently with targeted mypy checks.
 ---
+## 2026-02-02 - US-066
+- Implemented: `build_confidence_flags()` method on ConfidenceScorer class in `asre/score/confidence_scorer.py`
+- Method returns a list containing names of all active signals (where signal=True) AND all applied penalty flags
+- Active signals: signal names from evaluate_signals() where value is True (e.g., HAS_CLAIMS, HAS_ADT_ADMIT)
+- Penalty flags: carried from encounter.confidence_flags (set by ReconcileStage), deduplicated against signal names
+- Files changed:
+  - `asre/score/confidence_scorer.py` — added `build_confidence_flags()` method
+  - `tests/unit/test_confidence_scorer.py` — added `TestConfidenceFlagsPopulation` class with 4 tests
+  - `prd.json` — marked US-066 passes: true
+- **Learnings for future iterations:**
+  - build_confidence_flags() combines signal evaluation and penalty flag collection into a single list
+  - Deduplication ensures no flag appears twice (e.g., if a penalty flag name were to match a signal name)
+  - TIMESTAMPS_CONSISTENT is excluded when TIMESTAMP_MISMATCH is present (via evaluate_signals logic)
+  - FACILITY_RESOLVED is excluded when facility_canonical_id is None (via evaluate_signals logic)
+  - 4 tests covering: claims+missing_discharge flags (1), all signals no penalties (1), penalty flags included (1), no duplicate flags (1)
+  - Total test count: 902 passed (unit tests)
+---
