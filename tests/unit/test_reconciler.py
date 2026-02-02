@@ -587,6 +587,360 @@ class TestAuthReconciliationRules:
         assert "AUTH_WITHOUT_ADMIT" not in flags
 
 
+class TestMissingDischargeFlag:
+    """US-062: MISSING_DISCHARGE flag when admit present but no discharge and open > 48h."""
+
+    def test_open_encounter_over_48h_produces_flag(self) -> None:
+        """Admit at Jan 1 10:00, current time Jan 5 -> open > 48h -> MISSING_DISCHARGE."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 1, 5, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_missing_discharge(enc, now=now)
+
+        assert "MISSING_DISCHARGE" in flags
+
+    def test_open_encounter_under_48h_no_flag(self) -> None:
+        """Admit at Jan 1 10:00, current time Jan 2 -> open < 48h -> no flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 1, 2, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_missing_discharge(enc, now=now)
+
+        assert "MISSING_DISCHARGE" not in flags
+
+    def test_closed_encounter_no_flag(self) -> None:
+        """Encounter with discharge event should not produce MISSING_DISCHARGE."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        adt_discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([adt_admit, adt_discharge])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 1, 10, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_missing_discharge(enc, now=now)
+
+        assert "MISSING_DISCHARGE" not in flags
+
+    def test_claims_only_open_over_48h_produces_flag(self) -> None:
+        """Claims admit with no discharge, open > 48h -> MISSING_DISCHARGE."""
+        claims_admit = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([claims_admit])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 1, 5, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_missing_discharge(enc, now=now)
+
+        assert "MISSING_DISCHARGE" in flags
+
+
+class TestOrphanDischargeFlag:
+    """US-062: ORPHAN_DISCHARGE flag when discharge event with no matching admit."""
+
+    def test_discharge_only_produces_flag(self) -> None:
+        """Encounter with only a discharge event -> ORPHAN_DISCHARGE."""
+        discharge = _make_event(
+            event_id="evt-001",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_orphan_discharge(enc)
+
+        assert "ORPHAN_DISCHARGE" in flags
+
+    def test_admit_and_discharge_no_flag(self) -> None:
+        """Encounter with both admit and discharge -> no ORPHAN_DISCHARGE."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        adt_discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([adt_admit, adt_discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_orphan_discharge(enc)
+
+        assert "ORPHAN_DISCHARGE" not in flags
+
+    def test_claims_discharge_without_claims_admit_produces_flag(self) -> None:
+        """CLAIM_DISCHARGE without any admit-type event -> ORPHAN_DISCHARGE."""
+        claims_discharge = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([claims_discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_orphan_discharge(enc)
+
+        assert "ORPHAN_DISCHARGE" in flags
+
+    def test_supporting_event_with_discharge_no_admit_produces_flag(self) -> None:
+        """Discharge + supporting event (non-admit) -> ORPHAN_DISCHARGE."""
+        supporting = _make_event(
+            event_id="evt-001",
+            event_type="TRANSFER_IN",
+            event_ts=datetime(2024, 1, 3, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+        )
+        discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([supporting, discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_orphan_discharge(enc)
+
+        assert "ORPHAN_DISCHARGE" in flags
+
+
+class TestClaimsOnlyEncounterFlag:
+    """US-062: CLAIMS_ONLY_ENCOUNTER flag when encounter has claims but zero ADT."""
+
+    def test_claims_only_produces_flag(self) -> None:
+        """Encounter with only claims events -> CLAIMS_ONLY_ENCOUNTER."""
+        claims_admit = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_discharge = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([claims_admit, claims_discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_claims_only(enc)
+
+        assert "CLAIMS_ONLY_ENCOUNTER" in flags
+
+    def test_claims_and_adt_no_flag(self) -> None:
+        """Encounter with both claims and ADT events -> no flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_claims_only(enc)
+
+        assert "CLAIMS_ONLY_ENCOUNTER" not in flags
+
+    def test_claims_and_auth_still_flags(self) -> None:
+        """Encounter with claims + auth but no ADT -> CLAIMS_ONLY_ENCOUNTER."""
+        claims_admit = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        auth_event = _make_event(
+            event_id="evt-002",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([claims_admit, auth_event])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_claims_only(enc)
+
+        assert "CLAIMS_ONLY_ENCOUNTER" in flags
+
+
+class TestAdtOnlyEncounterFlag:
+    """US-062: ADT_ONLY_ENCOUNTER flag when ADT events but zero claims beyond claims lag."""
+
+    def test_adt_only_beyond_claims_lag_produces_flag(self) -> None:
+        """ADT-only encounter, admit Jan 1, now Mar 1 (>45 day lag) -> ADT_ONLY_ENCOUNTER."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        adt_discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([adt_admit, adt_discharge])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 3, 1, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_adt_only(enc, now=now, claims_lag_days=45)
+
+        assert "ADT_ONLY_ENCOUNTER" in flags
+
+    def test_adt_only_within_claims_lag_no_flag(self) -> None:
+        """ADT-only encounter, admit Jan 1, now Jan 20 (<45 day lag) -> no flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 1, 20, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_adt_only(enc, now=now, claims_lag_days=45)
+
+        assert "ADT_ONLY_ENCOUNTER" not in flags
+
+    def test_adt_and_claims_no_flag(self) -> None:
+        """Encounter with both ADT and claims -> no flag regardless of age."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 6, 1, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_adt_only(enc, now=now, claims_lag_days=45)
+
+        assert "ADT_ONLY_ENCOUNTER" not in flags
+
+    def test_auth_only_no_flag(self) -> None:
+        """Auth-only encounter should not produce ADT_ONLY_ENCOUNTER."""
+        auth_event = _make_event(
+            event_id="evt-001",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([auth_event])
+
+        reconciler = Reconciler()
+        now = datetime(2024, 6, 1, 10, 0, tzinfo=timezone.utc)
+        flags = reconciler.flag_adt_only(enc, now=now, claims_lag_days=45)
+
+        assert "ADT_ONLY_ENCOUNTER" not in flags
+
+
+class TestFlagEventPatternsIntegration:
+    """US-062: All flags are added to encounter's confidence_flags array."""
+
+    def test_multiple_flags_combined(self) -> None:
+        """Encounter can have multiple flags from different checks."""
+        # Claims-only encounter with orphan discharge (no admit event)
+        claims_discharge = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([claims_discharge])
+
+        reconciler = Reconciler()
+        flags: list[str] = []
+        flags.extend(reconciler.flag_orphan_discharge(enc))
+        flags.extend(reconciler.flag_claims_only(enc))
+
+        assert "ORPHAN_DISCHARGE" in flags
+        assert "CLAIMS_ONLY_ENCOUNTER" in flags
+
+
 class TestTimestampMismatchFlag:
     """US-061: Flag timestamp mismatches between ADT and claims sources."""
 

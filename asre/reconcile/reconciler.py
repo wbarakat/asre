@@ -16,6 +16,10 @@ AUTH_WITHOUT_ADMIT flag.
 US-061: Flag timestamp mismatches. When ADT and claims admit/discharge
 timestamps differ by more than timestamp_tolerance_hours, flag
 TIMESTAMP_MISMATCH on the encounter.
+
+US-062: Flag missing event patterns. Common data quality flags:
+MISSING_DISCHARGE, ORPHAN_DISCHARGE, CLAIMS_ONLY_ENCOUNTER,
+ADT_ONLY_ENCOUNTER, AUTH_WITHOUT_ADMIT.
 """
 
 from __future__ import annotations
@@ -335,6 +339,146 @@ class Reconciler:
             diff_hours = abs((adt_discharge_ts - claims_discharge_ts).total_seconds()) / 3600
             if diff_hours > timestamp_tolerance_hours:
                 flags.append("TIMESTAMP_MISMATCH")
+
+        return flags
+
+    def flag_missing_discharge(
+        self,
+        encounter: StitchedEncounter,
+        now: datetime | None = None,
+        open_threshold_hours: int = 48,
+    ) -> list[str]:
+        """Flag MISSING_DISCHARGE when admit present but no discharge and open > threshold.
+
+        Args:
+            encounter: A stitched encounter with events.
+            now: Current time for age calculation. Defaults to utcnow.
+            open_threshold_hours: Hours an encounter must be open before flagging.
+
+        Returns:
+            List of flag strings.
+        """
+        flags: list[str] = []
+
+        if encounter.has_discharge:
+            return flags
+
+        # Check if any admit-type event exists
+        has_admit = any(
+            e.event_type in _ADMIT_EVENT_TYPES for e in encounter.events
+        )
+        if not has_admit:
+            return flags
+
+        # Find earliest admit timestamp
+        admit_ts = self._earliest_ts(encounter.events, _ADMIT_EVENT_TYPES)
+        if admit_ts is None:
+            return flags
+
+        if now is None:
+            now = datetime.now(tz=admit_ts.tzinfo)
+
+        hours_open = (now - admit_ts).total_seconds() / 3600
+        if hours_open > open_threshold_hours:
+            flags.append("MISSING_DISCHARGE")
+
+        return flags
+
+    def flag_orphan_discharge(
+        self, encounter: StitchedEncounter
+    ) -> list[str]:
+        """Flag ORPHAN_DISCHARGE when discharge event exists with no matching admit.
+
+        Args:
+            encounter: A stitched encounter with events.
+
+        Returns:
+            List of flag strings.
+        """
+        flags: list[str] = []
+
+        has_discharge = any(
+            e.event_type in _DISCHARGE_EVENT_TYPES for e in encounter.events
+        )
+        has_admit = any(
+            e.event_type in _ADMIT_EVENT_TYPES for e in encounter.events
+        )
+
+        if has_discharge and not has_admit:
+            flags.append("ORPHAN_DISCHARGE")
+
+        return flags
+
+    def flag_claims_only(
+        self, encounter: StitchedEncounter
+    ) -> list[str]:
+        """Flag CLAIMS_ONLY_ENCOUNTER when encounter has claims but zero ADT events.
+
+        Args:
+            encounter: A stitched encounter with events.
+
+        Returns:
+            List of flag strings.
+        """
+        flags: list[str] = []
+
+        has_claims = False
+        has_adt = False
+
+        for event in encounter.events:
+            source_type = _extract_source_type(event.source_system)
+            if source_type == "claims":
+                has_claims = True
+            elif source_type == "adt":
+                has_adt = True
+
+        if has_claims and not has_adt:
+            flags.append("CLAIMS_ONLY_ENCOUNTER")
+
+        return flags
+
+    def flag_adt_only(
+        self,
+        encounter: StitchedEncounter,
+        now: datetime | None = None,
+        claims_lag_days: int = 45,
+    ) -> list[str]:
+        """Flag ADT_ONLY_ENCOUNTER when ADT events but zero claims beyond expected lag.
+
+        Only flags if the encounter is older than claims_lag_days, since claims
+        may not have arrived yet for recent encounters.
+
+        Args:
+            encounter: A stitched encounter with events.
+            now: Current time for age calculation. Defaults to utcnow.
+            claims_lag_days: Days to wait before flagging missing claims.
+
+        Returns:
+            List of flag strings.
+        """
+        flags: list[str] = []
+
+        has_adt = False
+        has_claims = False
+
+        for event in encounter.events:
+            source_type = _extract_source_type(event.source_system)
+            if source_type == "adt":
+                has_adt = True
+            elif source_type == "claims":
+                has_claims = True
+
+        if not has_adt or has_claims:
+            return flags
+
+        # Check if encounter is old enough to expect claims
+        earliest_event = min(encounter.events, key=lambda e: e.event_ts)
+        if now is None:
+            now = datetime.now(tz=earliest_event.event_ts.tzinfo)
+
+        days_old = (now - earliest_event.event_ts).total_seconds() / 86400
+        if days_old > claims_lag_days:
+            flags.append("ADT_ONLY_ENCOUNTER")
 
         return flags
 
