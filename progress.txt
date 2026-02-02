@@ -1,4 +1,9 @@
 ## Codebase Patterns
+- Reconciler flag methods: flag_missing_discharge(enc, now, open_threshold_hours=48), flag_orphan_discharge(enc), flag_claims_only(enc), flag_adt_only(enc, now, claims_lag_days=45) — all return list[str]
+- flag_missing_discharge checks has_discharge on StitchedEncounter, then verifies admit-type events exist and encounter open > threshold
+- flag_orphan_discharge checks for discharge-type events without any admit-type events in the encounter
+- flag_claims_only / flag_adt_only use _extract_source_type() to categorize events by source
+- flag_adt_only respects claims_lag_days — only flags if encounter is older than lag threshold
 - Reconciler.reconcile_auth(encounter) returns list[str] of flags; AUTH_WITHOUT_ADMIT if encounter has auth events but no ADT/claims events
 - Reconciler.reconcile_classification(encounter) returns ReconciledClassification with encounter_type, drg, payer_id, principal_diagnosis, admitting_diagnosis, diagnosis_codes
 - ReconciledClassification dataclass: encounter_type (str), drg/payer_id/principal_diagnosis/admitting_diagnosis (str|None), diagnosis_codes (list[dict])
@@ -1187,4 +1192,22 @@
   - Returns early after first mismatch found (admit checked first, then discharge)
   - `_earliest_ts()` finds earliest timestamp among events matching given types per source, used for comparison
   - Tolerance is passed as parameter (not read from config); caller (ReconcileStage) will pass from config
+---
+
+## 2026-02-02 - US-062
+- What was implemented: Four new flag methods in Reconciler for common data quality issue detection
+  - `flag_missing_discharge(encounter, now, open_threshold_hours=48)` — MISSING_DISCHARGE when admit present, no discharge, open > 48h
+  - `flag_orphan_discharge(encounter)` — ORPHAN_DISCHARGE when discharge event exists with no matching admit
+  - `flag_claims_only(encounter)` — CLAIMS_ONLY_ENCOUNTER when claims events but zero ADT events
+  - `flag_adt_only(encounter, now, claims_lag_days=45)` — ADT_ONLY_ENCOUNTER when ADT events but zero claims beyond lag
+  - AUTH_WITHOUT_ADMIT was already implemented in US-060
+- Files changed:
+  - `asre/reconcile/reconciler.py` — Added 4 new methods + updated docstring
+  - `tests/unit/test_reconciler.py` — Added 16 new tests across 5 test classes
+- **Learnings for future iterations:**
+  - All flag methods follow the same pattern: return `list[str]`, check event types or source types, append flag string if condition met
+  - StitchedEncounter.has_discharge is reliable for checking discharge presence (set by add_event)
+  - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES constants defined at module level in reconciler.py
+  - Time-based flags (MISSING_DISCHARGE, ADT_ONLY_ENCOUNTER) accept `now` parameter for testability instead of using datetime.now() directly
+  - Claims lag concept: ADT-only encounters should only be flagged after sufficient time has passed for claims to arrive (default 45 days)
 ---
