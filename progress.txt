@@ -1,5 +1,7 @@
 ## Codebase Patterns
 - Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
+- Deduplicator in `asre/dedup/deduplicator.py`: find_duplicates(events) returns list of duplicate groups; uses union-find for transitive clustering
+- Deduplicator match key uses getattr on CanonicalEvent; default match_fields: patient_key, event_type, facility_canonical_id
 - All `__init__.py` files are empty placeholders
 - CLI entry point: `asre.cli.main:cli` using Click
 - mypy configured in strict mode in pyproject.toml
@@ -1040,4 +1042,19 @@
   - Test timestamps must be within 48h default time_window_hours — events farther apart will produce separate encounters
   - 18 tests covering: interface (3), processing (6), metrics (6), config-driven (2), end-to-end (1)
   - Total test count: 786 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-053
+- Implemented Deduplicator class in `asre/dedup/deduplicator.py`
+- Identifies duplicate events by configurable match_fields + time_tolerance_minutes
+- Uses union-find algorithm to transitively cluster duplicates within time window
+- Groups events by match key (default: patient_key, event_type, facility_canonical_id), then checks pairwise time proximity
+- Files changed: `asre/dedup/deduplicator.py` (new), `tests/unit/test_deduplicator.py` (new)
+- **Learnings for future iterations:**
+  - Deduplicator.find_duplicates() returns list of duplicate groups (each group is list of 2+ events)
+  - Union-find pattern used for transitive duplicate clustering (A~B, B~C => {A,B,C})
+  - Match key extraction uses getattr on CanonicalEvent fields; custom match_fields supported
+  - Events sorted by event_ts within each match group for efficient comparison
+  - Boundary condition: events exactly at time_tolerance_minutes apart ARE considered duplicates (<=)
+  - Pre-existing mypy errors in 6 other test files; new dedup files pass mypy cleanly
 ---
