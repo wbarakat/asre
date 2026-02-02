@@ -66,10 +66,12 @@
 - For mypy strict: use `count: int = adapter.write_records(...)` to avoid `Returning Any` when adapter typed as `Any`
 - Click CLI: `facilities` is a group with `invoke_without_command=True`; group-level options (--config-path, --customer-id) passed to subcommands via `ctx.obj` dict
 - `_get_facility_adapter(config_path, customer_id)` in cli/main.py creates connected PostgresAdapter from config — mock this in tests
-- EncounterStitcher returns `list[StitchedEncounter]` — intermediate dataclass with events, patient_key, facility_canonical_id, last_event_ts
-- StitchedEncounter.add_event() updates last_event_ts for sliding window computation
+- EncounterStitcher returns `list[StitchedEncounter]` — intermediate dataclass with events, patient_key, facility_canonical_id, last_event_ts, encounter_type
+- StitchedEncounter.add_event() updates last_event_ts for sliding window computation and derives encounter_type from patient_class priority
 - Source type extraction from source_system name: prefix-based (adt_*, claims_*, auth_*)
 - Tiebreaker map: lower index = higher priority in same_timestamp_tiebreaker list
+- EncounterStitcher accepts `patient_class_transitions` param (default: ed->IP merge, obs->IP merge, IP->IP new_encounter)
+- encounter_type priority: inpatient > observation > ed > outpatient (highest priority patient_class wins)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -130,7 +132,7 @@
 ## Phase 6: Encounter Stitching (US-043 to US-052)
 - [x] US-043: Basic encounter stitching (priority 43)
 - [x] US-044: Facility matching requirement for stitching (priority 44)
-- [ ] US-045: ED to IP merge (priority 45)
+- [x] US-045: ED to IP merge (priority 45)
 - [ ] US-046: OBS to IP conversion (priority 46)
 - [ ] US-047: IP to IP as new encounter (priority 47)
 - [ ] US-048: Transfer chain detection (priority 48)
@@ -214,9 +216,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 18
+- Completed: 19
 - In progress: 0
-- Not started: 90
+- Not started: 89
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -878,4 +880,20 @@
   - When `facility_must_match=true`, null facilities are treated as non-matching — `None != None` is explicitly handled
   - 10 tests covering: facility_must_match=true (3 — different facilities separate, same facility same, default value), facility_must_match=false (4 — different facilities same encounter, time window still applies, null facilities stitch, mixed null/set stitch), null handling (3 — null-null no stitch, set-null no stitch, null-set no stitch)
   - Total test count: 692 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-045
+- Implemented: ED to IP merge in `asre/stitch/encounter_stitcher.py` — ED_ARRIVAL + ADMIT at same facility within time window merges into single encounter with encounter_type=inpatient
+- Added `encounter_type` field to `StitchedEncounter` dataclass, derived from highest-priority patient_class seen across events
+- Added `patient_class_transitions` parameter to `EncounterStitcher` constructor with defaults from SPEC §4.2
+- encounter_type priority: inpatient(0) > observation(1) > ed(2) > outpatient(3) — highest priority wins
+- `_update_encounter_type()` called on every `add_event()` to track the dominant patient_class
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_ed_to_ip_merge.py (new)
+- **Learnings for future iterations:**
+  - encounter_type derivation uses a priority map — inpatient always wins over ed/observation
+  - patient_class_transitions config is stored but not yet used for `new_encounter` action (needed for US-047 IP->IP)
+  - StitchedEncounter now tracks encounter_type alongside existing fields — downstream stages can use it
+  - ED events with patient_class="ed" are simply kept in the encounter event list — no special "supporting" role marking needed at stitch time (that's for the detail table in later stages)
+  - 8 tests covering: merge (1), encounter_type=inpatient (1), ED events kept (1), default transitions (1), different facility (1), outside window (1), ED-only type (1), multiple ED before admit (1)
+  - Total test count: 700 passed + 16 skipped (integration tests skip without Postgres)
 ---

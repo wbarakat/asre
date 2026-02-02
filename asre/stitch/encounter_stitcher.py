@@ -2,6 +2,9 @@
 
 US-043: Basic encounter stitching. Events are partitioned by patient_key,
 sorted by event_ts, and grouped into encounters using time window + facility matching.
+
+US-045: ED to IP merge. ED_ARRIVAL + ADMIT at same facility within time window
+merges into a single encounter with encounter_type = inpatient.
 """
 
 from __future__ import annotations
@@ -25,12 +28,31 @@ class StitchedEncounter:
     facility_canonical_id: str | None
     events: list[CanonicalEvent] = field(default_factory=list)
     last_event_ts: datetime | None = None
+    encounter_type: str | None = None
 
     def add_event(self, event: CanonicalEvent) -> None:
-        """Add an event to this encounter and update last_event_ts."""
+        """Add an event to this encounter and update last_event_ts and encounter_type."""
         self.events.append(event)
         if self.last_event_ts is None or event.event_ts > self.last_event_ts:
             self.last_event_ts = event.event_ts
+        self._update_encounter_type(event)
+
+    def _update_encounter_type(self, event: CanonicalEvent) -> None:
+        """Derive encounter_type from the highest-priority patient_class seen.
+
+        Priority: inpatient > observation > ed > outpatient.
+        """
+        priority = {"inpatient": 0, "observation": 1, "ed": 2, "outpatient": 3}
+        event_class = event.patient_class
+        if event_class is None:
+            return
+        new_priority = priority.get(event_class.lower(), 4)
+        if self.encounter_type is None:
+            self.encounter_type = event_class.lower()
+        else:
+            current_priority = priority.get(self.encounter_type, 4)
+            if new_priority < current_priority:
+                self.encounter_type = event_class.lower()
 
 
 class EncounterStitcher:
@@ -44,11 +66,19 @@ class EncounterStitcher:
     4. Otherwise -> close current encounter, start new one
     """
 
+    # Default patient class transition rules per SPEC §4.2
+    DEFAULT_TRANSITIONS: list[dict[str, str]] = [
+        {"from": "ed", "to": "inpatient", "action": "merge"},
+        {"from": "observation", "to": "inpatient", "action": "merge"},
+        {"from": "inpatient", "to": "inpatient", "action": "new_encounter"},
+    ]
+
     def __init__(
         self,
         time_window_hours: int = 48,
         facility_must_match: bool = True,
         same_timestamp_tiebreaker: list[str] | None = None,
+        patient_class_transitions: list[dict[str, str]] | None = None,
     ) -> None:
         self.time_window_hours = time_window_hours
         self.facility_must_match = facility_must_match
@@ -57,6 +87,11 @@ class EncounterStitcher:
             "adt",
             "auth",
         ]
+        self.patient_class_transitions = (
+            patient_class_transitions
+            if patient_class_transitions is not None
+            else self.DEFAULT_TRANSITIONS
+        )
 
     def stitch(self, events: list[CanonicalEvent]) -> list[StitchedEncounter]:
         """Stitch canonical events into encounter groupings.
