@@ -1,6 +1,9 @@
 ## Codebase Patterns
 - Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
 - Deduplicator in `asre/dedup/deduplicator.py`: find_duplicates(events) returns list of duplicate groups; uses union-find for transitive clustering
+- Deduplicator.merge_overlapping_encounters(encounters) merges overlapping StitchedEncounters for same patient+facility; groups by (patient_key, facility_canonical_id), sorts by earliest event_ts, sweep-merges overlapping ranges
+- Open encounters (has_discharge=False) overlap with any later encounter at same patient+facility
+- Merged encounter uses earlier encounter's encounter_id for stability; all events combined and re-sorted by event_ts
 - Deduplicator.resolve_duplicates(groups, source_priority) returns (kept, duplicates) tuple; sorts by -priority then ingested_at
 - Deduplicator.mark_roles(kept, duplicates) is a static method — sets role_in_encounter='duplicate' on duplicate events; kept events unchanged
 - CanonicalEvent.role_in_encounter: str | None — values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
@@ -1087,4 +1090,17 @@
   - `Deduplicator.mark_roles(kept, duplicates)` is a static method — call after `resolve_duplicates()` to set roles
   - Kept events retain their existing role_in_encounter; duplicates get overwritten to "duplicate"
   - Pre-existing mypy errors in 6 test files (12 errors) — not related to dedup changes
+---
+
+## 2026-02-02 - US-056
+- What was implemented: Encounter-level dedup — merges overlapping encounters for the same patient at the same facility
+- Files changed:
+  - `asre/dedup/deduplicator.py` — added `merge_overlapping_encounters()` method and helpers (`_earliest_event_ts`, `_latest_event_ts`, `_encounters_overlap`, `_merge_group`, `_merge_two`)
+  - `tests/unit/test_encounter_dedup.py` — 10 new tests covering: overlapping merge, non-overlapping stay separate, different facility/patient stay separate, earlier ID stability, event combination, open encounter overlap, three-way transitive merge, empty/single input
+  - `prd.json` — marked US-056 as passes: true
+- **Learnings for future iterations:**
+  - StitchedEncounter._DISCHARGE_EVENT_TYPES is a dataclass field with default_factory (instance attribute), not a class attribute — use `encounter.has_discharge` flag instead of accessing the type set directly
+  - TYPE_CHECKING import pattern works for avoiding circular imports between dedup and stitch modules
+  - Overlap detection for open encounters: if has_discharge=False, treat as extending to infinity (overlaps with any later encounter at same patient+facility)
+  - Pre-existing mypy errors (12 in 6 files) are not related to dedup changes — my files pass clean
 ---
