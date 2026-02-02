@@ -16,7 +16,7 @@
 - [x] US-001: Create Python project structure (priority 1)
 - [x] US-002: Define CanonicalEvent dataclass (priority 2)
 - [x] US-003: Define Encounter dataclass (priority 3)
-- [ ] US-004: Define Episode dataclass (priority 4)
+- [x] US-004: Define Episode dataclass (priority 4)
 - [ ] US-005: Define DiagnosisCode model (priority 5)
 - [ ] US-006: Define EventBatch dataclass (priority 6)
 - [ ] US-007: Implement structured JSON logging (priority 7)
@@ -151,7 +151,7 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 3
+- Completed: 4
 - In progress: 0
 - Not started: 105
 
@@ -184,4 +184,14 @@
   - Encounter has 18 required fields and 14 optional fields
   - `diagnosis_codes` uses same `list[dict[str, Any]]` pattern as CanonicalEvent for JSON compatibility
   - `transfer_chain` and `source_event_ids` are `list[str]` (required vs optional distinction matters)
+---
+
+## 2026-02-01 - US-004
+- Implemented: Episode dataclass in `asre/models/episode.py` with all 19 fields from SPEC §3.4 (asre_episodes)
+- Files changed: asre/models/episode.py, tests/unit/test_episode.py
+- **Learnings for future iterations:**
+  - Episode has 13 required fields and 6 optional fields
+  - Same pattern as Encounter: required fields first, optional with defaults after
+  - `facility_sequence` is `list[str]` (ordered list of facility IDs in the episode)
+  - `total_los_days` is float (not int) to capture partial days
 ---
