@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asre"
+version = "0.1.0"
+description = "Admission Signal Reliability Engine - Healthcare data reliability layer"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "pyyaml>=6.0,<7.0",
+    "click>=8.0,<9.0",
+    "rapidfuzz>=3.0,<4.0",
+    "dbt-core>=1.7,<2.0",
+    "dbt-postgres>=1.7,<2.0",
+    "sqlalchemy>=2.0,<3.0",
+    "psycopg2-binary>=2.9,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0,<9.0",
+    "syrupy>=4.0,<5.0",
+    "mypy>=1.0,<2.0",
+    "types-PyYAML",
+]
+
+[project.scripts]
+asre = "asre.cli.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["asre*"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
