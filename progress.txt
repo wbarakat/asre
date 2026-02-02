@@ -1,4 +1,8 @@
 ## Codebase Patterns
+- ConfidenceScorer in `asre/score/confidence_scorer.py`: evaluate_signals(enc) returns dict[str, bool]; compute_score(enc) returns float 0-1
+- ConfidenceScorer signal evaluation: HAS_CLAIMS/HAS_ADT_ADMIT/HAS_ADT_DISCHARGE/HAS_AUTH from source_system prefix; FACILITY_RESOLVED from facility_canonical_id not None; TIMESTAMPS_CONSISTENT from no TIMESTAMP_MISMATCH flag; PATIENT_CLASS_CONSISTENT from <=1 distinct patient_class values
+- ConfidenceScorer.max_score = sum of all signal weights (default 100); score = active_weight_sum / max_score
+- _extract_source_type() pattern reused across modules: prefix-based (claims/auth/adt) from source_system name
 - Reconciler flag methods: flag_missing_discharge(enc, now, open_threshold_hours=48), flag_orphan_discharge(enc), flag_claims_only(enc), flag_adt_only(enc, now, claims_lag_days=45) — all return list[str]
 - flag_missing_discharge checks has_discharge on StitchedEncounter, then verifies admit-type events exist and encounter open > threshold
 - flag_orphan_discharge checks for discharge-type events without any admit-type events in the encounter
@@ -1231,4 +1235,19 @@
   - Stage collects flags from all reconciler methods into a single confidence_flags list per encounter
   - flags_generated dict on stage tracks aggregate flag counts across all encounters for metrics reporting
   - Config path: `context.config["reconciliation"]["timestamp_tolerance_hours"]` (default 24)
+---
+
+## 2026-02-02 - US-064
+- Implemented ConfidenceScorer with weighted binary signal evaluation
+- 7 signals: HAS_CLAIMS(30), HAS_ADT_ADMIT(20), HAS_ADT_DISCHARGE(10), HAS_AUTH(10), FACILITY_RESOLVED(5), TIMESTAMPS_CONSISTENT(15), PATIENT_CLASS_CONSISTENT(10)
+- Score = sum(active_signal_weights) / sum(all_weights), normalized to [0, 1]
+- Files changed:
+  - `asre/score/confidence_scorer.py` — New file: ConfidenceScorer class
+  - `tests/unit/test_confidence_scorer.py` — 7 tests covering all acceptance criteria
+- **Learnings for future iterations:**
+  - Signal evaluation reuses _extract_source_type() prefix pattern from other modules
+  - TIMESTAMPS_CONSISTENT derived from absence of TIMESTAMP_MISMATCH flag in confidence_flags
+  - PATIENT_CLASS_CONSISTENT checks distinct non-null patient_class values across events (<=1 = consistent)
+  - Test data must carefully control ALL signals — easy to accidentally activate PATIENT_CLASS_CONSISTENT or TIMESTAMPS_CONSISTENT
+  - ReconciledEncounter delegates attribute access to StitchedEncounter via __getattr__
 ---
