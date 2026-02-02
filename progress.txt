@@ -1,4 +1,10 @@
 ## Codebase Patterns
+- PipelineRunner in `asre/pipeline/runner.py`: orchestrates 9 stages in order; data handoff via _handoff() method after each stage
+- PipelineRunner._stages is an OrderedDict[str, PipelineStage]; can be replaced in tests with `runner._stages = {...}`
+- PipelineRunner generates run_id as `run_YYYYMMDD_HHMMSS` format
+- PipelineRunner._handoff() wires: ingest.raw_records -> config["raw_records"]; stitch.encounters -> dedup.encounters_in; dedup.encounters -> reconcile.encounters_in; reconcile.encounters -> score.encounters_in
+- PipelineRunner populates config["facility_registry_map"] from FacilityNormalizationStage._registry after facility_normalize stage
+- _NoOpStage is a placeholder PipelineStage for not-yet-implemented stages (materialize, quality_check)
 - ConfidenceScorer in `asre/score/confidence_scorer.py`: evaluate_signals(enc) returns dict[str, bool]; compute_score(enc) returns float 0-1
 - ConfidenceScorer signal evaluation: HAS_CLAIMS/HAS_ADT_ADMIT/HAS_ADT_DISCHARGE/HAS_AUTH from source_system prefix; FACILITY_RESOLVED from facility_canonical_id not None; TIMESTAMPS_CONSISTENT from no TIMESTAMP_MISMATCH flag; PATIENT_CLASS_CONSISTENT from <=1 distinct patient_class values
 - ConfidenceScorer.max_score = sum of all signal weights (default 100); score = active_weight_sum / max_score, then penalties subtracted, floored at 0.0
@@ -1326,4 +1332,20 @@
   - ScoreStage uses `facility_registry_map` from config (dict[str, str]) to look up facility_type — the pipeline runner (US-069) must populate this from FacilityRegistry before invoking ScoreStage
   - confidence_score is set directly on ReconciledEncounter via dynamic attribute assignment (type: ignore needed for mypy)
   - Total test count: 919 passed (unit tests)
+---
+
+## 2026-02-02 - US-069
+- What was implemented: PipelineRunner class orchestrating 9 pipeline stages in sequence with data handoff
+- Files changed:
+  - `asre/pipeline/runner.py` — Added PipelineRunner class, _NoOpStage placeholder, _STAGE_ORDER constant
+  - `tests/unit/test_pipeline_runner.py` — 14 tests covering construction, stage sequencing, data handoff, facility registry map, metrics collection, placeholder stages
+  - `prd.json` — marked US-069 passes: true
+  - `progress.txt` — updated codebase patterns and progress
+- **Learnings for future iterations:**
+  - PipelineRunner uses OrderedDict for _stages to preserve insertion order for iteration
+  - Data handoff between stages uses hasattr() checks so tests can inject custom stage objects without all attributes
+  - FacilityNormalizationStage requires constructor args (normalizer, alias_config, registry); PipelineRunner._build_facility_stage() handles this
+  - _NoOpStage provides materialize and quality_check placeholders — future stories (US-072, US-085) will replace these
+  - facility_registry_map is populated from stage._registry after facility_normalize; ScoreStage depends on this
+  - Total test count: 933 passed (unit tests)
 ---
