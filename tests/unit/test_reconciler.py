@@ -585,3 +585,145 @@ class TestAuthReconciliationRules:
         flags = reconciler.reconcile_auth(enc)
 
         assert "AUTH_WITHOUT_ADMIT" not in flags
+
+
+class TestTimestampMismatchFlag:
+    """US-061: Flag timestamp mismatches between ADT and claims sources."""
+
+    def test_mismatch_above_tolerance_produces_flag(self) -> None:
+        """ADT admit 10:00 Jan 1, claims admit 15:00 Jan 2 (29h diff) with tolerance 24h -> TIMESTAMP_MISMATCH."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_timestamp_mismatches(enc, timestamp_tolerance_hours=24)
+
+        assert "TIMESTAMP_MISMATCH" in flags
+
+    def test_no_mismatch_within_tolerance(self) -> None:
+        """ADT admit 10:00, claims admit 11:00 (1h diff) -> no flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 11, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_timestamp_mismatches(enc, timestamp_tolerance_hours=24)
+
+        assert "TIMESTAMP_MISMATCH" not in flags
+
+    def test_discharge_mismatch_also_flags(self) -> None:
+        """Discharge timestamps that differ beyond tolerance also produce flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        adt_discharge = _make_event(
+            event_id="evt-003",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        claims_discharge = _make_event(
+            event_id="evt-004",
+            event_type="CLAIM_DISCHARGE",
+            event_ts=datetime(2024, 1, 6, 15, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit, adt_discharge, claims_discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_timestamp_mismatches(enc, timestamp_tolerance_hours=24)
+
+        assert "TIMESTAMP_MISMATCH" in flags
+
+    def test_custom_tolerance(self) -> None:
+        """Custom tolerance is respected — 29h diff with tolerance 48h -> no flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_timestamp_mismatches(enc, timestamp_tolerance_hours=48)
+
+        assert "TIMESTAMP_MISMATCH" not in flags
+
+    def test_single_source_no_flag(self) -> None:
+        """Encounter with only one source type cannot have timestamp mismatch."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        adt_discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 5, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        enc = _make_encounter([adt_admit, adt_discharge])
+
+        reconciler = Reconciler()
+        flags = reconciler.flag_timestamp_mismatches(enc, timestamp_tolerance_hours=24)
+
+        assert "TIMESTAMP_MISMATCH" not in flags

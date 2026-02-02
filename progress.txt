@@ -115,6 +115,9 @@
 - Reconciler._select_timestamp(events, event_types) groups matching events by source type, picks highest priority source, returns earliest timestamp from that source
 - _extract_source_type() helper shared pattern: prefix-based (claims/auth/adt) extraction from source_system name
 - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES sets defined at module level in reconciler.py (same values as encounter_stitcher.py)
+- Reconciler.flag_timestamp_mismatches(encounter, timestamp_tolerance_hours=24) returns list[str] of flags; compares ADT vs claims admit/discharge timestamps
+- _earliest_ts(events, event_types) static method on Reconciler — returns earliest timestamp among events matching given types, or None
+- TIMESTAMP_MISMATCH flag: only generated when BOTH ADT and claims sources present AND admit or discharge timestamps differ by > tolerance hours
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -1170,4 +1173,18 @@
   - Auth priority enforcement for timestamps/classification was already implemented in US-058/US-059 via default priority maps
   - _extract_source_type() reused for detecting auth vs adt vs claims source types in reconcile_auth
   - Auth events are "supporting signals" — they validate encounters but never anchor them (no new encounter creation from auth alone)
+---
+
+## 2026-02-02 - US-061
+- What was implemented: Flag timestamp mismatches — `flag_timestamp_mismatches()` method on Reconciler class
+- Files changed:
+  - `asre/reconcile/reconciler.py` — added `flag_timestamp_mismatches()` method and `_earliest_ts()` static helper
+  - `tests/unit/test_reconciler.py` — added `TestTimestampMismatchFlag` test class (5 tests)
+  - `prd.json` — marked US-061 passes: true
+- **Learnings for future iterations:**
+  - TIMESTAMP_MISMATCH compares ADT vs claims timestamps for both admit and discharge event types
+  - Only flags when BOTH sources are present — single-source encounters cannot have mismatches
+  - Returns early after first mismatch found (admit checked first, then discharge)
+  - `_earliest_ts()` finds earliest timestamp among events matching given types per source, used for comparison
+  - Tolerance is passed as parameter (not read from config); caller (ReconcileStage) will pass from config
 ---

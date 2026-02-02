@@ -12,6 +12,10 @@ US-060: Auth reconciliation rules. Auth events validate encounters
 without anchoring them. Auth has lowest priority for timestamps and
 classification. Orphan auth signals (no ADT/claims) produce
 AUTH_WITHOUT_ADMIT flag.
+
+US-061: Flag timestamp mismatches. When ADT and claims admit/discharge
+timestamps differ by more than timestamp_tolerance_hours, flag
+TIMESTAMP_MISMATCH on the encounter.
 """
 
 from __future__ import annotations
@@ -279,6 +283,71 @@ class Reconciler:
             flags.append("AUTH_WITHOUT_ADMIT")
 
         return flags
+
+    def flag_timestamp_mismatches(
+        self,
+        encounter: StitchedEncounter,
+        timestamp_tolerance_hours: int = 24,
+    ) -> list[str]:
+        """Check for timestamp mismatches between ADT and claims sources.
+
+        Compares admit and discharge timestamps from ADT vs claims.
+        If the difference exceeds timestamp_tolerance_hours, adds
+        TIMESTAMP_MISMATCH flag.
+
+        Args:
+            encounter: A stitched encounter with events.
+            timestamp_tolerance_hours: Maximum allowed difference in hours.
+
+        Returns:
+            List of flag strings (e.g., ["TIMESTAMP_MISMATCH"]).
+        """
+        flags: list[str] = []
+
+        # Group events by source type
+        source_events: dict[str, list[CanonicalEvent]] = {}
+        for event in encounter.events:
+            source_type = _extract_source_type(event.source_system)
+            source_events.setdefault(source_type, []).append(event)
+
+        adt_events = source_events.get("adt", [])
+        claims_events = source_events.get("claims", [])
+
+        # Need both ADT and claims to compare
+        if not adt_events or not claims_events:
+            return flags
+
+        # Compare admit timestamps
+        adt_admit_ts = self._earliest_ts(adt_events, _ADMIT_EVENT_TYPES)
+        claims_admit_ts = self._earliest_ts(claims_events, _ADMIT_EVENT_TYPES)
+
+        if adt_admit_ts is not None and claims_admit_ts is not None:
+            diff_hours = abs((adt_admit_ts - claims_admit_ts).total_seconds()) / 3600
+            if diff_hours > timestamp_tolerance_hours:
+                flags.append("TIMESTAMP_MISMATCH")
+                return flags
+
+        # Compare discharge timestamps
+        adt_discharge_ts = self._earliest_ts(adt_events, _DISCHARGE_EVENT_TYPES)
+        claims_discharge_ts = self._earliest_ts(claims_events, _DISCHARGE_EVENT_TYPES)
+
+        if adt_discharge_ts is not None and claims_discharge_ts is not None:
+            diff_hours = abs((adt_discharge_ts - claims_discharge_ts).total_seconds()) / 3600
+            if diff_hours > timestamp_tolerance_hours:
+                flags.append("TIMESTAMP_MISMATCH")
+
+        return flags
+
+    @staticmethod
+    def _earliest_ts(
+        events: list[CanonicalEvent],
+        event_types: set[str],
+    ) -> datetime | None:
+        """Get the earliest timestamp among events matching given types."""
+        matching = [e for e in events if e.event_type in event_types]
+        if not matching:
+            return None
+        return min(e.event_ts for e in matching)
 
     def _select_timestamp(
         self,
