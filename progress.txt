@@ -7,6 +7,8 @@
 - Test directories (tests/, tests/unit/, tests/integration/) need `__init__.py` files
 - Use `from __future__ import annotations` in dataclass modules for `str | None` syntax
 - Run tests with `python3 -m pytest` (not `python -m pytest`) on this system
+- Use `make test`, `make typecheck`, `make check` for common dev commands
+- Shared fixtures in `tests/conftest.py`: sample_canonical_event, sample_encounter, sample_event_batch
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -21,9 +23,9 @@
 - [x] US-006: Define EventBatch dataclass (priority 6)
 - [x] US-007: Implement structured JSON logging (priority 7)
 - [x] US-008: Implement per-stage metrics tracking (priority 8)
-- [ ] US-009: Define PipelineStage interface (priority 9)
-- [ ] US-010: Scaffold dbt project for PostgreSQL (priority 10)
-- [ ] US-011: Set up test infrastructure (priority 11)
+- [x] US-009: Define PipelineStage interface (priority 9)
+- [x] US-010: Scaffold dbt project for PostgreSQL (priority 10)
+- [x] US-011: Set up test infrastructure (priority 11)
 
 ## Phase 2: Configuration System (US-012 to US-017)
 - [ ] US-012: Define global config Pydantic schema (priority 12)
@@ -151,9 +153,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 6
+- Completed: 7
 - In progress: 0
-- Not started: 103
+- Not started: 102
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -241,4 +243,37 @@
   - `datetime.now(timezone.utc)` for UTC timestamps (not `datetime.utcnow()` which is naive)
   - StageMetrics is a plain class (not dataclass) because it needs `__enter__`/`__exit__` methods and mutable state
   - 7 tests covering: construction, timing capture, failure recording, field tracking, to_dict serialization, UTC validation
+---
+
+## 2026-02-01 - US-009
+- Implemented: PipelineStage ABC and PipelineContext dataclass in `asre/pipeline/runner.py`
+- PipelineStage defines abstract `run(batch: EventBatch, context: PipelineContext) -> EventBatch` method
+- PipelineContext holds: run_id (str), config (dict), mode (str), metrics_collector (Any, default None)
+- Files changed: asre/pipeline/runner.py, tests/unit/test_pipeline_stage.py
+- **Learnings for future iterations:**
+  - PipelineContext uses `dict[str, Any]` for config since the Pydantic schema isn't defined yet (US-012)
+  - metrics_collector typed as `Any` since no MetricsCollector class exists yet
+  - 7 tests: 4 for PipelineContext construction, 3 for PipelineStage ABC (direct instantiation fails, dummy implementation works, incomplete subclass fails)
+---
+
+## 2026-02-01 - US-010
+- Implemented: dbt project scaffold with dbt_project.yml (project name asre), profiles.yml (local PostgreSQL via env vars), .gitkeep files in all empty model directories
+- Files changed: dbt_project/dbt_project.yml, dbt_project/profiles.yml, dbt_project/models/staging/.gitkeep, dbt_project/models/intermediate/.gitkeep, dbt_project/models/marts/.gitkeep, dbt_project/tests/.gitkeep, tests/unit/test_dbt_project.py
+- **Learnings for future iterations:**
+  - dbt_project.yml uses `config-version: 2` for dbt 1.7+
+  - profiles.yml uses `{{ env_var('VAR', 'default') }}` Jinja syntax for env var substitution with defaults
+  - dbt debug requires a running Postgres instance - can only be tested in integration tests, not unit tests
+  - Empty directories in git need .gitkeep files to be tracked
+  - 8 tests covering: yml existence, project name, required keys, profiles existence, postgres target type, model dirs, gitkeep files, tests dir
+---
+
+## 2026-02-02 - US-011
+- Implemented: Test infrastructure with shared conftest fixtures, integration test directory, Makefile with common commands
+- Files changed: tests/conftest.py (new), tests/unit/test_conftest_fixtures.py (new), tests/integration/__init__.py (new), Makefile (new)
+- **Learnings for future iterations:**
+  - conftest.py at tests/ level makes fixtures available to both unit/ and integration/ tests
+  - syrupy provides `snapshot` fixture automatically when installed - no conftest setup needed
+  - Makefile targets: test, test-unit, test-integration, typecheck, lint, install, clean, check
+  - 9 tests verify fixtures: 2 for sample_canonical_event, 2 for sample_encounter, 4 for sample_event_batch, 1 for syrupy
+  - Total test count: 67 (58 existing + 9 new)
 ---
