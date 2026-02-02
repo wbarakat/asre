@@ -73,6 +73,9 @@
 - EncounterStitcher accepts `patient_class_transitions` param (default: ed->IP merge, obs->IP merge, IP->IP new_encounter)
 - encounter_type priority: inpatient > observation > ed > outpatient (highest priority patient_class wins)
 - StitchedEncounter.obs_to_ip_conversion detected by OBS_TO_IP event_type in `_check_obs_to_ip()`
+- StitchedEncounter.has_discharge tracks whether a discharge event has occurred; used by `_should_force_new_encounter()` to detect IP->IP transitions
+- `_should_force_new_encounter()` checks: has_discharge + incoming admit-type event + matching new_encounter transition rule
+- Discharge event types: DISCHARGE, CLAIM_DISCHARGE, ED_DEPARTURE, OBS_END; Admit event types: ADMIT, CLAIM_ADMIT, ED_ARRIVAL, OBS_START
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -912,4 +915,22 @@
   - ED->IP merges correctly do NOT set obs_to_ip_conversion (different event_type)
   - 7 tests covering: single encounter (1), conversion flag set (1), encounter_type=inpatient (1), default transitions config (1), OBS-only no flag (1), with additional events (1), ED->IP no flag (1)
   - Total test count: 707 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-047
+- Implemented: IP to IP as new encounter in `asre/stitch/encounter_stitcher.py`
+- Added `has_discharge: bool` field to `StitchedEncounter` to track whether a discharge event has occurred
+- Added `_DISCHARGE_EVENT_TYPES` and `_ADMIT_EVENT_TYPES` class-level sets for event type classification
+- Added `_should_force_new_encounter()` method that checks: (1) current encounter has discharge, (2) incoming event is admit-type, (3) transition rule matches with action=new_encounter
+- Transition check integrated into `_should_stitch()` as the first check (before facility and time window)
+- ED->IP merge and OBS->IP merge still work correctly (their transition action is "merge", not "new_encounter")
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_ip_to_ip_new_encounter.py (new)
+- **Learnings for future iterations:**
+  - The `new_encounter` action in patient_class_transitions requires detecting that the current encounter is "closed" (has a discharge event) before a new admit arrives
+  - Discharge detection uses event_type set membership, not discharge_flag — because discharge_flag may not always be set on all discharge-like events
+  - The transition check must happen BEFORE facility and time window checks — otherwise the event would stitch into the current encounter
+  - ED->IP and OBS->IP are unaffected because their transition action is "merge" and they don't trigger has_discharge first
+  - `_should_force_new_encounter` requires both from_class and to_class to be non-None — events without patient_class won't trigger new_encounter
+  - 9 tests covering: two encounters (1), first encounter contents (1), second encounter contents (1), both inpatient type (1), default config (1), ED->IP still merges (1), OBS->IP still merges (1), different facility (1), supporting events (1)
+  - Total test count: 716 passed + 16 skipped (integration tests skip without Postgres)
 ---

@@ -8,6 +8,10 @@ merges into a single encounter with encounter_type = inpatient.
 
 US-046: OBS to IP conversion. OBS_START + OBS_TO_IP at same facility within time
 window merges into a single encounter with obs_to_ip_conversion = true.
+
+US-047: IP to IP as new encounter. DISCHARGE + new ADMIT (both IP) at same facility
+within time window produces two separate encounters based on patient_class_transitions
+with action=new_encounter.
 """
 
 from __future__ import annotations
@@ -33,6 +37,19 @@ class StitchedEncounter:
     last_event_ts: datetime | None = None
     encounter_type: str | None = None
     obs_to_ip_conversion: bool = False
+    has_discharge: bool = False
+
+    # Event types that indicate a discharge has occurred
+    _DISCHARGE_EVENT_TYPES: set[str] = field(
+        default_factory=lambda: {"DISCHARGE", "CLAIM_DISCHARGE", "ED_DEPARTURE", "OBS_END"},
+        repr=False,
+    )
+
+    # Event types that indicate an admission
+    _ADMIT_EVENT_TYPES: set[str] = field(
+        default_factory=lambda: {"ADMIT", "CLAIM_ADMIT", "ED_ARRIVAL", "OBS_START"},
+        repr=False,
+    )
 
     def add_event(self, event: CanonicalEvent) -> None:
         """Add an event to this encounter and update last_event_ts and encounter_type."""
@@ -41,6 +58,8 @@ class StitchedEncounter:
             self.last_event_ts = event.event_ts
         self._update_encounter_type(event)
         self._check_obs_to_ip(event)
+        if event.event_type in self._DISCHARGE_EVENT_TYPES:
+            self.has_discharge = True
 
     def _check_obs_to_ip(self, event: CanonicalEvent) -> None:
         """Detect OBS_TO_IP event and set conversion flag."""
@@ -203,9 +222,14 @@ class EncounterStitcher:
         """Determine if event should be stitched into the current encounter.
 
         Checks:
-        1. Facility must match (if configured)
-        2. Event is within time_window_hours of current encounter's last event
+        1. Patient class transition rules (new_encounter action forces split)
+        2. Facility must match (if configured)
+        3. Event is within time_window_hours of current encounter's last event
         """
+        # Check patient_class_transitions for new_encounter action
+        if self._should_force_new_encounter(current, event):
+            return False
+
         # Check facility match
         if self.facility_must_match:
             if current.facility_canonical_id != event.facility_canonical_id:
@@ -221,3 +245,36 @@ class EncounterStitcher:
                 return False
 
         return True
+
+    def _should_force_new_encounter(
+        self, current: StitchedEncounter, event: CanonicalEvent
+    ) -> bool:
+        """Check if patient_class transition rules require a new encounter.
+
+        A new encounter is forced when:
+        1. The current encounter has had a discharge event
+        2. The incoming event is an admit-type event
+        3. A transition rule with action=new_encounter matches the
+           from (current encounter_type) -> to (incoming patient_class)
+        """
+        if not current.has_discharge:
+            return False
+
+        if event.event_type not in current._ADMIT_EVENT_TYPES:
+            return False
+
+        from_class = current.encounter_type
+        to_class = event.patient_class
+        if from_class is None or to_class is None:
+            return False
+
+        to_class_lower = to_class.lower()
+        for transition in self.patient_class_transitions:
+            if (
+                transition.get("from") == from_class
+                and transition.get("to") == to_class_lower
+                and transition.get("action") == "new_encounter"
+            ):
+                return True
+
+        return False
