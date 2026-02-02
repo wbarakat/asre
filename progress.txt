@@ -58,6 +58,7 @@
 - FacilityMatcher.resolve_or_create() cascades: exact -> NPI -> CCN -> fuzzy -> create new; new facilities get FAC_{uuid} IDs and FACILITY_NEW_UNREVIEWED flag
 - MatchResult has `flags: list[str]` field (default empty list) for carrying metadata like FACILITY_NEW_UNREVIEWED
 - New runtime facilities are added to both _alias_index and _fuzzy_candidates so subsequent events reuse them (no duplicates)
+- FacilityNormalizationStage takes normalizer, alias_config, and registry as constructor args; new facilities must be added to both matcher (via resolve_or_create) AND registry (via add_facility)
 - FacilityRegistry in `asre/facility/registry.py`: primary store is dict[canonical_id, FacilityRecord] with alias/NPI/CCN indexes
 - FacilityRecord dataclass: canonical_id, canonical_name, facility_type, npi, ccn, aliases, flags — has to_dict() for persistence
 - Registry `persist(adapter)` serializes aliases/flags to JSON strings before calling adapter.write_records("asre_facility_registry", records)
@@ -117,7 +118,7 @@
 - [x] US-038: Implement fuzzy matching (priority 38)
 - [x] US-039: Handle unresolved facilities (priority 39)
 - [x] US-040: Implement facility registry (priority 40)
-- [ ] US-041: Implement FacilityNormalizationStage (priority 41)
+- [x] US-041: Implement FacilityNormalizationStage (priority 41)
 - [ ] US-042: Add facility CLI commands (priority 42)
 
 ## Phase 6: Encounter Stitching (US-043 to US-052)
@@ -803,4 +804,22 @@
   - add_alias raises ValueError for unknown canonical_id — fail-fast on programming errors
   - 30 tests covering: construction (4), alias lookup (5), NPI lookup (5), CCN lookup (3), add facility (7), persistence (4), FacilityRecord (2)
   - Total test count: 635 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-041
+- Implemented: FacilityNormalizationStage in `asre/facility/stage.py` implementing PipelineStage
+- Stage processes each canonical event: normalizes facility_raw via FacilityMatcher.resolve_or_create(), sets facility_canonical_id
+- Cascades through match tiers: exact alias -> NPI -> CCN -> fuzzy -> create new
+- NPI/CCN extracted from event._raw_payload if available
+- New facilities registered in FacilityRegistry with FACILITY_NEW_UNREVIEWED flag
+- StageMetrics tracks records_in, records_out, errors with stage_name="facility_normalize"
+- Files changed: asre/facility/stage.py (new), tests/unit/test_facility_normalization_stage.py (new)
+- **Learnings for future iterations:**
+  - FacilityNormalizationStage takes normalizer, alias_config, and registry as constructor args — these are shared across the pipeline
+  - FacilityMatcher (from US-036-039) handles the full resolution cascade internally via resolve_or_create()
+  - New facilities created by the matcher must ALSO be added to the registry (separate data store from matcher's internal index)
+  - NPI/CCN come from event._raw_payload (the original source record dict), not from CanonicalEvent fields
+  - When testing new facility creation with multiple events, use very distinct names to avoid fuzzy matching between them
+  - 16 tests covering: interface (3), exact matching (2), fuzzy matching (1), new facility creation (3), empty facility (1), mixed batch (1), metrics (3), registry updates (2)
+  - Total test count: 651 passed + 16 skipped (integration tests skip without Postgres)
 ---
