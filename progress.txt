@@ -19,6 +19,8 @@
 - IngestQueryBuilder accepts optional `watermark` (datetime|None) and `lookback_buffer_hours` (int) params for incremental mode
 - `dedup_by_source_record_id(records, key_field)` in `asre/ingest/dedup.py` returns `(deduped_records, dedup_count)` tuple
 - For mypy strict: use explicit `list[dict[str, Any]]` type annotation when list contains dicts with heterogeneous values (None, missing keys)
+- Integration test fixtures: use `Generator[T, None, None]` return type for yield fixtures (mypy strict), use `pytest.skip()` when Postgres unavailable
+- Integration test Postgres config: `ASRE_TEST_PG_*` env vars with defaults (host=localhost, port=5432, database=asre_test, user=postgres, password=postgres)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -51,7 +53,7 @@
 - [x] US-020: Implement full mode ingest (priority 20)
 - [x] US-021: Implement incremental mode with lookback buffer (priority 21)
 - [x] US-022: Implement source_record_id dedup on ingest (priority 22)
-- [ ] US-023: Implement exclude filters (priority 23)
+- [x] US-023: Implement exclude filters (priority 23)
 - [ ] US-024: Implement watermark management (priority 24)
 - [ ] US-025: Implement IngestStage (priority 25)
 - [ ] US-026: Implement basic migration infrastructure (priority 26)
@@ -455,4 +457,18 @@
   - `str()` conversion of key values ensures consistent hashing even for non-string source_record_ids
   - 9 tests covering: no dupes, basic dedup, multiple dupes of same id, order preservation, empty input, single record, custom key field, missing key field, None key values
   - Total test count: 263 (254 existing + 9 new)
+---
+
+## 2026-02-02 - US-023
+- Implemented: Integration tests for exclude filters in `tests/integration/test_exclude_filters.py`
+- The exclude filter query logic was already implemented in `asre/ingest/query_builder.py` (from US-020) as `WHERE NOT (<exclude_expression>)` clause
+- Integration tests verify actual data exclusion against a real PostgreSQL database (skip when Postgres unavailable)
+- Files changed: tests/integration/test_exclude_filters.py (new)
+- **Learnings for future iterations:**
+  - Integration test fixtures use `Generator[T, None, None]` return type for pytest yield fixtures (mypy strict requirement)
+  - Use `pytest.skip()` in fixture when Postgres not available rather than marking entire module
+  - Integration test fixture pattern: `pg_adapter` fixture creates+connects adapter, `adt_table` fixture depends on it to create/populate/cleanup test tables
+  - `_pg_config()` reads from `ASRE_TEST_PG_*` env vars with sensible defaults for local dev
+  - 6 integration tests covering: A08/A31 exclusion, non-matching kept, no filter returns all, single event type, incremental mode combo, non-matching filter
+  - Total test count: 263 passed + 6 skipped (integration tests skip without Postgres)
 ---
