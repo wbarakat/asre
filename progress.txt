@@ -24,6 +24,10 @@
 - IngestStage stores raw records on `stage.raw_records` (list of dicts), not in EventBatch.events (those are for CanonicalEvents)
 - IngestStage annotates each record with `_raw_payload`, `_source_name`, `_source_type` for downstream canonicalize routing
 - Defensive copy before annotation: `dict(record)` before adding metadata keys to avoid mutating adapter-returned dicts
+- Migration filenames use `_NNN_description.py` pattern (underscore prefix for valid Python module names); Migrator regex `^_?(\d+)_(.+)\.py$` handles both prefixed and unprefixed
+- Migration scripts expose `description: str` and `upgrade(adapter: IngestAdapter) -> None` at module level
+- Use `CREATE TABLE IF NOT EXISTS` in migrations for idempotency
+- Migrator stores schema_version in asre_metadata table (same table used for watermarks)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -59,7 +63,7 @@
 - [x] US-023: Implement exclude filters (priority 23)
 - [x] US-024: Implement watermark management (priority 24)
 - [x] US-025: Implement IngestStage (priority 25)
-- [ ] US-026: Implement basic migration infrastructure (priority 26)
+- [x] US-026: Implement basic migration infrastructure (priority 26)
 
 ## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
 - [ ] US-027: Implement field mapper (priority 27)
@@ -505,4 +509,21 @@
   - `source_record_id` field name comes from `field_mappings.source_record_id` in source config (the column name in the source table, not the canonical field name)
   - 16 tests covering: interface (2), orchestration (7), metrics (4), query building (3)
   - Total test count: 284 passed + 11 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-026
+- Implemented: Migration infrastructure with Migrator class in `asre/migration/migrator.py` and initial schema migration in `asre/migration/versions/_001_initial_schema.py`
+- Migrator checks asre_metadata for schema_version, creates table if missing, discovers migration scripts by filename prefix, runs pending migrations
+- MigrationInfo dataclass holds version, description, module_name; MigrationResult holds applied count and current_version
+- 001_initial_schema creates asre_metadata table (key TEXT PRIMARY KEY, value TEXT NOT NULL) with IF NOT EXISTS for idempotency
+- Files changed: asre/migration/migrator.py (new), asre/migration/versions/_001_initial_schema.py (new), tests/unit/test_migrator.py (new), tests/unit/test_001_initial_schema.py (new), tests/integration/test_migrator_integration.py (new)
+- **Learnings for future iterations:**
+  - Migration filenames use `_NNN_description.py` pattern (underscore prefix) because Python modules can't start with digits
+  - Migrator regex `^_?(\d+)_(.+)\.py$` handles both `_001_` and `001_` prefixed filenames
+  - Migration scripts are plain modules with `description: str` and `upgrade(adapter) -> None` at module level — no class needed
+  - `importlib.import_module(module_name)` loads migration scripts dynamically
+  - Schema version stored in same asre_metadata table as watermarks (key='schema_version')
+  - set_schema_version uses same ON CONFLICT upsert pattern as watermarks
+  - 19 unit tests + 5 integration tests covering: Migrator construction (2), schema version check (3), migration discovery (3), execution (4), version setting (1), initial schema migration (6), integration (5)
+  - Total test count: 303 passed + 16 skipped (integration tests skip without Postgres)
 ---
