@@ -18,8 +18,8 @@
 - [x] US-003: Define Encounter dataclass (priority 3)
 - [x] US-004: Define Episode dataclass (priority 4)
 - [x] US-005: Define DiagnosisCode model (priority 5)
-- [ ] US-006: Define EventBatch dataclass (priority 6)
-- [ ] US-007: Implement structured JSON logging (priority 7)
+- [x] US-006: Define EventBatch dataclass (priority 6)
+- [x] US-007: Implement structured JSON logging (priority 7)
 - [ ] US-008: Implement per-stage metrics tracking (priority 8)
 - [ ] US-009: Define PipelineStage interface (priority 9)
 - [ ] US-010: Scaffold dbt project for PostgreSQL (priority 10)
@@ -151,7 +151,7 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 5
+- Completed: 6
 - In progress: 0
 - Not started: 103
 
@@ -204,4 +204,27 @@
   - DiagnosisCode is a simple dataclass with 2 required fields (code, type) and 2 optional (sequence, poa)
   - `to_dict()` / `from_dict()` pattern useful for any model that needs JSON column storage
   - `from_dict` uses `dict.get()` for optional fields to handle missing keys gracefully
+---
+
+## 2026-02-01 - US-006
+- Implemented: EventBatch dataclass in `asre/models/batch.py` with `batch_id: str` and `events: list[CanonicalEvent]`
+- Files changed: asre/models/batch.py, tests/unit/test_batch.py
+- **Learnings for future iterations:**
+  - EventBatch is minimal: just batch_id + events list, per SPEC §2.4
+  - Same `from __future__ import annotations` pattern as other models
+  - 6 tests covering construction, empty events, index access, iteration, and type checks
+---
+
+## 2026-02-01 - US-007
+- Implemented: Structured JSON logging in `asre/observability/logger.py` with `get_logger(stage, run_id)` function
+- `_JsonFormatter` class formats log records as JSON with timestamp, level, stage, run_id, message fields
+- Extra kwargs (records_in, records_out, duration_seconds) passed via `extra={}` are included in JSON output
+- Each logger is namespaced as `asre.{stage}.{run_id}` with propagation disabled to avoid duplicate output
+- Files changed: asre/observability/logger.py, tests/unit/test_logger.py
+- **Learnings for future iterations:**
+  - Use `logging.StreamHandler` with custom `Formatter` subclass for JSON output
+  - `getattr(record, key, None)` extracts extra kwargs from LogRecord
+  - Logger names must be unique per stage+run_id to avoid handler duplication
+  - `logger.propagate = False` prevents double-logging via root logger
+  - Tests redirect handler stream to `io.StringIO` for output capture
 ---
