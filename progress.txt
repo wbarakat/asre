@@ -30,6 +30,9 @@
 - Migrator stores schema_version in asre_metadata table (same table used for watermarks)
 - FieldMapper maps raw records to CanonicalEvent; event_type set to "UNKNOWN" (resolved separately by EventTypeResolver)
 - CanonicalEvent.facility_raw is required (str, not Optional) — use empty string when mapping not configured
+- EventTypeResolver: conditional mappings checked first (order matters), then direct mappings, then "UNKNOWN" fallback
+- `_evaluate_condition` handles simple `field == 'value' AND field2 == 'value2'` expressions safely (no eval)
+- `_evaluate_flag` handles `event_type IN ('V1', 'V2')` expressions for admit/discharge flag resolution
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -69,7 +72,7 @@
 
 ## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
 - [x] US-027: Implement field mapper (priority 27)
-- [ ] US-028: Implement event type resolver for ADT (priority 28)
+- [x] US-028: Implement event type resolver for ADT (priority 28)
 - [ ] US-029: Implement paired event emission for claims (priority 29)
 - [ ] US-030: Implement patient class resolution for claims (priority 30)
 - [ ] US-031: Implement diagnosis code mapping (priority 31)
@@ -174,9 +177,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 16
+- Completed: 17
 - In progress: 0
-- Not started: 92
+- Not started: 91
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -548,4 +551,23 @@
   - `_get_optional` pattern: check mapping field is not None, then check record value is not None, then str() convert
   - 17 tests covering: construction (2), required field mapping (1), event_ts parsing (2), UUID generation (2), ingested_at (1), optional fields (2), raw_payload (1), event_type default (1), facility_raw edge case (1), configured optional fields (3), missing source column (1)
   - Total test count: 320 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-028
+- Implemented: EventTypeResolver class in `asre/canonicalize/event_type_resolver.py`
+- Resolves HL7 event codes + patient class into canonical ASRE event types
+- Resolution order: conditional mappings (first match wins) -> direct mappings -> "UNKNOWN" fallback
+- Conditional mapping evaluator handles `field == 'value' AND field2 == 'value2'` expressions safely (no eval())
+- Flag evaluator handles `event_type IN ('V1', 'V2')` expressions for admit_flag/discharge_flag
+- All 10 direct HL7 mappings (A01-A13) and 4 conditional mappings (ED/OBS variants) tested
+- Files changed: asre/canonicalize/event_type_resolver.py (new), tests/unit/test_event_type_resolver.py (new)
+- **Learnings for future iterations:**
+  - EventTypeResolver takes raw_record dict (not just CanonicalEvent) because conditional mappings reference source fields like `hl7_event` and `patient_class`
+  - Conditional mappings are checked BEFORE direct mappings - first match wins, so ordering in config matters
+  - The resolver mutates the CanonicalEvent in-place (sets event_type, admit_flag, discharge_flag) and returns it
+  - Source field values are stripped of whitespace before lookup (` A01 ` matches `A01`)
+  - When source field is missing or None, event stays as "UNKNOWN" - no error raised
+  - Flag expressions use `event_type IN (...)` pattern evaluated against the resolved event type, not the raw source code
+  - 46 tests covering: construction (2), direct mappings (11), conditional mappings (6), admit_flag (5), discharge_flag (5), edge cases (7), _evaluate_condition (6), _evaluate_flag (4)
+  - Total test count: 366 passed + 16 skipped (integration tests skip without Postgres)
 ---
