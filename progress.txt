@@ -1,4 +1,10 @@
 ## Codebase Patterns
+- Reconciler.reconcile_classification(encounter) returns ReconciledClassification with encounter_type, drg, payer_id, principal_diagnosis, admitting_diagnosis, diagnosis_codes
+- ReconciledClassification dataclass: encounter_type (str), drg/payer_id/principal_diagnosis/admitting_diagnosis (str|None), diagnosis_codes (list[dict])
+- Classification priority defaults: claims=100, ADT=80, auth=40 (stored in _DEFAULT_CLASSIFICATION_PRIORITY)
+- Admitting diagnosis specifically resolved from ADT source (not highest-priority source)
+- Diagnosis codes aggregated across sources in priority order with dedup by code value
+- _resolve_field() is a generic helper for picking field value from highest-priority source
 - Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
 - Deduplicator in `asre/dedup/deduplicator.py`: find_duplicates(events) returns list of duplicate groups; uses union-find for transitive clustering
 - Deduplicator.merge_overlapping_encounters(encounters) merges overlapping StitchedEncounters for same patient+facility; groups by (patient_key, facility_canonical_id), sorts by earliest event_ts, sweep-merges overlapping ranges
@@ -186,7 +192,7 @@
 
 ## Phase 8: Cross-Source Reconciliation (US-058 to US-063)
 - [ ] US-058: Timestamp selection by source priority (priority 58)
-- [ ] US-059: Classification resolution by source priority (priority 59)
+- [x] US-059: Classification resolution by source priority (priority 59)
 - [ ] US-060: Auth reconciliation rules (priority 60)
 - [ ] US-061: Flag timestamp mismatches (priority 61)
 - [ ] US-062: Flag missing event patterns (priority 62)
@@ -1135,4 +1141,18 @@
   - _extract_source_type is duplicated from Deduplicator._source_type (static method) — consider extracting to shared utility if needed again
   - ReconciledTimestamps is a dataclass (not dict) for type safety — downstream stages should use its fields directly
   - Tests use _make_event and _make_encounter helpers defined at test module level for clean test construction
+---
+
+## 2026-02-02 - US-059
+- What was implemented: Classification resolution by source priority in Reconciler
+- Files changed:
+  - `asre/reconcile/reconciler.py` (modified) — Added ReconciledClassification dataclass, reconcile_classification() method, _resolve_encounter_type(), _resolve_field(), _resolve_admitting_diagnosis(), _aggregate_diagnosis_codes() helpers, _DEFAULT_CLASSIFICATION_PRIORITY constant
+  - `tests/unit/test_reconciler.py` (modified) — Added 8 tests: encounter_type from claims over ADT, DRG from claims, payer from highest priority, principal/admitting diagnosis, diagnosis code aggregation, ADT-only encounter type, auth not overriding
+  - `prd.json` (modified) — US-059 passes: true
+- **Learnings for future iterations:**
+  - ReconciledClassification mirrors ReconciledTimestamps pattern: dataclass return type for type safety
+  - Admitting diagnosis is special-cased to come from ADT specifically, not from highest classification priority source
+  - Diagnosis code aggregation deduplicates by code value across sources, with higher-priority source codes appearing first
+  - _resolve_field() is generic: takes field_name string and uses getattr to pick from events — reusable for any field
+  - Test helper _make_event extended with drg, principal_diagnosis, diagnosis_codes, payer_id params for US-059 tests
 ---

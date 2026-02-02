@@ -1,11 +1,12 @@
-"""Tests for Reconciler — timestamp selection by source priority (US-058)."""
+"""Tests for Reconciler — timestamp and classification reconciliation (US-058, US-059)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from asre.models.canonical_event import CanonicalEvent
-from asre.reconcile.reconciler import Reconciler
+from asre.reconcile.reconciler import Reconciler, ReconciledClassification
 from asre.stitch.encounter_stitcher import StitchedEncounter
 
 
@@ -21,6 +22,10 @@ def _make_event(
     patient_class: str | None = None,
     admit_flag: bool | None = None,
     discharge_flag: bool | None = None,
+    drg: str | None = None,
+    principal_diagnosis: str | None = None,
+    diagnosis_codes: list[dict[str, Any]] | None = None,
+    payer_id: str | None = None,
 ) -> CanonicalEvent:
     """Helper to create canonical events for testing."""
     return CanonicalEvent(
@@ -37,6 +42,10 @@ def _make_event(
         patient_class=patient_class,
         admit_flag=admit_flag,
         discharge_flag=discharge_flag,
+        drg=drg,
+        principal_diagnosis=principal_diagnosis,
+        diagnosis_codes=diagnosis_codes,
+        payer_id=payer_id,
     )
 
 
@@ -224,3 +233,225 @@ class TestTimestampSelectionBySourcePriority:
         # Claims (80) > auth (40), so claims timestamp is used
         assert result.admit_ts == datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc)
         assert result.admit_source_priority == "claims"
+
+
+class TestClassificationResolutionBySourcePriority:
+    """US-059: encounter_type, DRG, payer, diagnoses from most trusted classification source."""
+
+    def test_encounter_type_from_claims_over_adt(self) -> None:
+        """Claims classification priority (100) beats ADT (80).
+        ADT says observation, claims says inpatient -> inpatient."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="observation",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        assert result.encounter_type == "inpatient"
+
+    def test_drg_from_claims_when_available(self) -> None:
+        """DRG is set from claims when available."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+            drg="470",
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        assert result.drg == "470"
+
+    def test_payer_id_from_highest_classification_priority(self) -> None:
+        """Payer is set from highest classification priority source."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            payer_id="PAYER-ADT",
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+            payer_id="PAYER-CLAIMS",
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        # Claims has classification_priority 100 > ADT 80
+        assert result.payer_id == "PAYER-CLAIMS"
+
+    def test_principal_diagnosis_from_claims(self) -> None:
+        """Principal diagnosis is set from claims when available."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            principal_diagnosis="J18.9",
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+            principal_diagnosis="J18.1",
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        # Claims has higher classification priority
+        assert result.principal_diagnosis == "J18.1"
+
+    def test_admitting_diagnosis_from_adt(self) -> None:
+        """Admitting diagnosis is set from ADT when available."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            principal_diagnosis="R07.9",
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+            principal_diagnosis="I21.0",
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        # Admitting diagnosis comes from ADT specifically
+        assert result.admitting_diagnosis == "R07.9"
+
+    def test_diagnosis_codes_aggregated_claims_precedence(self) -> None:
+        """Diagnosis codes aggregated from all sources with claims taking precedence."""
+        adt_codes = [{"code": "R07.9", "type": "ICD-10-CM", "sequence": 1, "poa": "Y"}]
+        claims_codes = [
+            {"code": "I21.0", "type": "ICD-10-CM", "sequence": 1, "poa": "Y"},
+            {"code": "I25.10", "type": "ICD-10-CM", "sequence": 2, "poa": "Y"},
+        ]
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            diagnosis_codes=adt_codes,
+        )
+        claims_admit = _make_event(
+            event_id="evt-002",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+            diagnosis_codes=claims_codes,
+        )
+        enc = _make_encounter([adt_admit, claims_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        # Claims codes come first (higher priority), then unique ADT codes
+        codes = [d["code"] for d in result.diagnosis_codes]
+        assert "I21.0" in codes
+        assert "I25.10" in codes
+        assert "R07.9" in codes
+        # Claims codes should appear before ADT-only codes
+        assert codes.index("I21.0") < codes.index("R07.9")
+
+    def test_encounter_type_adt_only(self) -> None:
+        """When only ADT events exist, encounter_type from ADT patient_class."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="observation",
+            admit_flag=True,
+        )
+        enc = _make_encounter([adt_admit])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        assert result.encounter_type == "observation"
+
+    def test_auth_not_overriding_classification(self) -> None:
+        """Auth has lowest classification priority (40), does not override ADT or claims."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            payer_id="PAYER-ADT",
+        )
+        auth_event = _make_event(
+            event_id="evt-002",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+            payer_id="PAYER-AUTH",
+        )
+        enc = _make_encounter([adt_admit, auth_event])
+
+        reconciler = Reconciler()
+        result = reconciler.reconcile_classification(enc)
+
+        # ADT (80) > auth (40) for classification
+        assert result.encounter_type == "inpatient"
+        assert result.payer_id == "PAYER-ADT"
