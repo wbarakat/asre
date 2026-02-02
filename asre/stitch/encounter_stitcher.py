@@ -19,6 +19,7 @@ CANCEL_DISCHARGE clears has_discharge and sets status=open (encounter reopened).
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -43,6 +44,7 @@ class StitchedEncounter:
     has_discharge: bool = False
     status: str = "open"
     transfer_chain: list[int] = field(default_factory=list)
+    encounter_id: str | None = None
 
     # Event types that indicate a discharge has occurred
     _DISCHARGE_EVENT_TYPES: set[str] = field(
@@ -55,6 +57,26 @@ class StitchedEncounter:
         default_factory=lambda: {"ADMIT", "CLAIM_ADMIT", "ED_ARRIVAL", "OBS_START"},
         repr=False,
     )
+
+    def generate_encounter_id(self) -> None:
+        """Generate a deterministic encounter_id from patient_key + facility + first admit source_record_id.
+
+        encounter_id = SHA-256 hex digest of (patient_key + facility_canonical_id + first_admit_source_record_id).
+        """
+        first_admit_src_id = self._get_first_admit_source_record_id()
+        facility = self.facility_canonical_id or ""
+        raw = f"{self.patient_key}|{facility}|{first_admit_src_id}"
+        self.encounter_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _get_first_admit_source_record_id(self) -> str:
+        """Get the source_record_id of the first admit-type event, or first event if no admit."""
+        for event in self.events:
+            if event.event_type in self._ADMIT_EVENT_TYPES:
+                return event.source_record_id
+        # Fallback to first event's source_record_id if no admit event found
+        if self.events:
+            return self.events[0].source_record_id
+        return ""
 
     def add_event(self, event: CanonicalEvent) -> None:
         """Add an event to this encounter and update last_event_ts, encounter_type, status."""
@@ -169,6 +191,10 @@ class EncounterStitcher:
             )
 
         self._detect_transfer_chains(encounters, patient_encounter_indices)
+
+        # Generate deterministic encounter IDs
+        for encounter in encounters:
+            encounter.generate_encounter_id()
 
         return encounters
 
