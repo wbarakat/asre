@@ -33,6 +33,8 @@
 - EventTypeResolver: conditional mappings checked first (order matters), then direct mappings, then "UNKNOWN" fallback
 - `_evaluate_condition` handles simple `field == 'value' AND field2 == 'value2'` expressions safely (no eval)
 - `_evaluate_flag` handles `event_type IN ('V1', 'V2')` expressions for admit/discharge flag resolution
+- PairedEventEmitter in `asre/canonicalize/paired_event_emitter.py` emits two CanonicalEvents from one claims row; uses PairedEvents config for event_ts columns and event_types
+- PairedEventEmitter reuses `_parse_event_ts` and `_get_optional` patterns from FieldMapper (static methods, same logic)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -73,7 +75,7 @@
 ## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
 - [x] US-027: Implement field mapper (priority 27)
 - [x] US-028: Implement event type resolver for ADT (priority 28)
-- [ ] US-029: Implement paired event emission for claims (priority 29)
+- [x] US-029: Implement paired event emission for claims (priority 29)
 - [ ] US-030: Implement patient class resolution for claims (priority 30)
 - [ ] US-031: Implement diagnosis code mapping (priority 31)
 - [ ] US-032: Implement auth status mapping (priority 32)
@@ -570,4 +572,19 @@
   - Flag expressions use `event_type IN (...)` pattern evaluated against the resolved event type, not the raw source code
   - 46 tests covering: construction (2), direct mappings (11), conditional mappings (6), admit_flag (5), discharge_flag (5), edge cases (7), _evaluate_condition (6), _evaluate_flag (4)
   - Total test count: 366 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-029
+- Implemented: PairedEventEmitter class in `asre/canonicalize/paired_event_emitter.py`
+- One claims source row emits two CanonicalEvents: admit (CLAIM_ADMIT, admit_flag=True) + discharge (CLAIM_DISCHARGE, discharge_flag=True)
+- Both events share: source_record_id, patient_key, facility_raw, source_system, batch_id, optional fields (payer_id, drg, principal_diagnosis, patient_class)
+- Each event gets its own unique UUID event_id and uses its own event_ts column from PairedEvents config
+- Uses same _parse_event_ts and _get_optional patterns as FieldMapper
+- Files changed: asre/canonicalize/paired_event_emitter.py (new), tests/unit/test_paired_event_emitter.py (new)
+- **Learnings for future iterations:**
+  - PairedEventEmitter is separate from FieldMapper — claims sources use PairedEventEmitter instead of FieldMapper+EventTypeResolver
+  - PairedEvents config specifies which source column to use for each event's event_ts (e.g., admission_date for admit, discharge_date for discharge)
+  - admit_flag and discharge_flag are set directly (True on respective event, None on the other) — no flag expression evaluation needed for claims
+  - 19 tests covering: construction (1), emission (9), shared fields (6), unique IDs (2), raw payload (1)
+  - Total test count: 385 passed + 16 skipped (integration tests skip without Postgres)
 ---
