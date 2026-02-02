@@ -49,6 +49,10 @@
 - "ST" is NOT expanded to "SAINT" in facility names (PRD expects "ST MARYS" not "SAINT MARYS")
 - Generic suffix removal strips preserved directional/campus tokens first, removes suffix from core, then re-appends preserved tokens
 - Default abbreviations do NOT include "ST"->"SAINT" — abbreviation list is in `asre/facility/normalizer.py`
+- FacilityMatcher in `asre/facility/matcher.py`: takes FacilityAliasConfig + FacilityNormalizer, builds normalized alias->canonical_id index at construction time
+- MatchResult dataclass: canonical_id, match_type, score — used as return type for all match methods
+- FacilityMatcher indexes both aliases AND canonical_name (normalized) for each facility
+- Both input and stored aliases are normalized via FacilityNormalizer for case-insensitive comparison
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -98,7 +102,7 @@
 
 ## Phase 5: Facility Normalization (US-035 to US-042)
 - [x] US-035: Implement string normalization pipeline (priority 35)
-- [ ] US-036: Implement exact alias matching (priority 36)
+- [x] US-036: Implement exact alias matching (priority 36)
 - [ ] US-037: Implement NPI/CCN matching (priority 37)
 - [ ] US-038: Implement fuzzy matching (priority 38)
 - [ ] US-039: Handle unresolved facilities (priority 39)
@@ -706,4 +710,21 @@
   - Word boundary regex (`\b`) for abbreviation matching prevents partial replacements (e.g., "HOSPITAL" doesn't re-expand "HOSP" inside it)
   - 38 tests covering: construction (2), uppercase/punctuation (5), abbreviation expansion (3), suffix removal (7), directional preservation (4), campus preservation (5), whitespace (2), PRD acceptance criteria (5), edge cases (5)
   - Total test count: 534 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-036
+- Implemented: FacilityMatcher class in `asre/facility/matcher.py` with exact alias matching
+- MatchResult dataclass with canonical_id, match_type, score fields
+- Loads FacilityAliasConfig into normalized alias -> canonical_id in-memory lookup
+- Both canonical_name and all aliases are normalized and indexed at construction time
+- match_exact() normalizes input, looks up in index, returns MatchResult or None
+- Case-insensitive comparison via normalization on both sides
+- Files changed: asre/facility/matcher.py (new), tests/unit/test_facility_matcher.py (new)
+- **Learnings for future iterations:**
+  - FacilityMatcher takes FacilityAliasConfig + FacilityNormalizer as constructor args — normalizer is reused for both indexing and input normalization
+  - Index both canonical_name AND aliases — canonical_name is also a valid lookup key after normalization
+  - MatchResult is a simple dataclass, not Pydantic — used as internal return type, not persisted
+  - match_exact returns None for empty/None input (normalizer returns "" for these, which is falsy)
+  - 17 tests covering: construction (2), exact matching (9), MatchResult fields (3), normalization before match (3)
+  - Total test count: 551 passed + 16 skipped (integration tests skip without Postgres)
 ---
