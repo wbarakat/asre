@@ -9,6 +9,8 @@
 - Run tests with `python3 -m pytest` (not `python -m pytest`) on this system
 - Use `make test`, `make typecheck`, `make check` for common dev commands
 - Shared fixtures in `tests/conftest.py`: sample_canonical_event, sample_encounter, sample_event_batch
+- For cross-module Pydantic models on GlobalConfig, use `Any` type (not forward refs) to avoid `model_rebuild()` issues
+- Config loader: `load_config(config_path, customer_id)` returns GlobalConfig with `.sources` and `.facility_aliases` attached
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -31,7 +33,7 @@
 - [x] US-012: Define global config Pydantic schema (priority 12)
 - [x] US-013: Define source config Pydantic schema (priority 13)
 - [x] US-014: Define facility alias config schema (priority 14)
-- [ ] US-015: Implement YAML config loader with env var substitution (priority 15)
+- [x] US-015: Implement YAML config loader with env var substitution (priority 15)
 - [ ] US-016: Create example customer config (priority 16)
 - [ ] US-017: Implement CLI skeleton (priority 17)
 
@@ -153,9 +155,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 7
+- Completed: 15
 - In progress: 0
-- Not started: 102
+- Not started: 93
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -315,4 +317,20 @@
   - `aliases: list[str] = []` defaults to empty list (Pydantic deep-copies mutable defaults)
   - 12 tests covering: FacilityAlias with all fields, required-only, missing fields, defaults + FacilityAliasConfig with valid/empty/default/invalid facilities
   - Total test count: 140 (128 existing + 12 new)
+---
+
+## 2026-02-02 - US-015
+- Implemented: YAML config loader in `asre/config/loader.py` with `load_config(config_path, customer_id) -> GlobalConfig`
+- Loads `config.yaml`, discovers all `sources/*.yaml`, optionally loads `facility_aliases.yaml`
+- Recursive `${ENV_VAR}` substitution in all YAML string values (supports multiple vars per string)
+- Added `sources: list[Any]` and `facility_aliases: Any | None` fields to `GlobalConfig` in schema.py
+- Files changed: asre/config/loader.py (new), asre/config/schema.py (modified), tests/unit/test_config_loader.py (new)
+- **Learnings for future iterations:**
+  - Pydantic forward references with `TYPE_CHECKING` don't work at runtime — use `Any` type for fields that hold models from other modules to avoid `model_rebuild()` issues
+  - `_substitute_env_vars` must be recursive to handle nested dicts/lists in YAML
+  - Attach source/alias models to GlobalConfig after construction (not via dict serialization) to preserve model instances
+  - `yaml.safe_load` returns `None` for empty files — need to handle that case
+  - mypy strict mode requires explicit type annotations on return values from `Any`-returning functions
+  - 19 tests covering: valid load (4), source loading (3), facility alias loading (3), env var substitution (4), error handling (5)
+  - Total test count: 159 (140 existing + 19 new)
 ---

@@ -174,3 +174,5 @@ class GlobalConfig(BaseModel):
     facility_normalization: FacilityNormalizationConfig = FacilityNormalizationConfig()
     confidence_scoring: ConfidenceScoringConfig = ConfidenceScoringConfig()
     alerting: AlertingConfig = AlertingConfig()
+    sources: list[Any] = []
+    facility_aliases: Any | None = None
