@@ -45,6 +45,10 @@
 - ADT processing: FieldMapper -> EventTypeResolver; Claims: PairedEventEmitter + PatientClassResolver + DiagnosisCodeMapper; Auth: FieldMapper -> EventTypeResolver -> AuthStatusMapper
 - PatientClassResolver conditions use `when` and `patient_class` keys (not `condition` and `value`)
 - EventTypeResolver conditional_mappings use `when` key (not `condition`)
+- FacilityNormalizer pipeline: uppercase -> strip punctuation -> expand abbreviations -> remove generic suffixes -> normalize whitespace
+- "ST" is NOT expanded to "SAINT" in facility names (PRD expects "ST MARYS" not "SAINT MARYS")
+- Generic suffix removal strips preserved directional/campus tokens first, removes suffix from core, then re-appends preserved tokens
+- Default abbreviations do NOT include "ST"->"SAINT" — abbreviation list is in `asre/facility/normalizer.py`
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -93,7 +97,7 @@
 - [x] US-034: Implement CanonicalizeStage (priority 34)
 
 ## Phase 5: Facility Normalization (US-035 to US-042)
-- [ ] US-035: Implement string normalization pipeline (priority 35)
+- [x] US-035: Implement string normalization pipeline (priority 35)
 - [ ] US-036: Implement exact alias matching (priority 36)
 - [ ] US-037: Implement NPI/CCN matching (priority 37)
 - [ ] US-038: Implement fuzzy matching (priority 38)
@@ -189,9 +193,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 17
+- Completed: 18
 - In progress: 0
-- Not started: 91
+- Not started: 90
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -685,4 +689,21 @@
   - Source configs passed to CanonicalizeStage as plain dicts (not Pydantic models) — FieldMappings/EventTypeRules etc. constructed inside the stage from dict kwargs
   - 34 tests covering: interface (3), ADT (7), claims (6), auth (5), mixed batch (3), error tolerance (3), metrics (5), source routing (2)
   - Total test count: 496 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-035
+- Implemented: FacilityNormalizer class in `asre/facility/normalizer.py` with configurable string normalization pipeline
+- Pipeline steps: uppercase -> strip punctuation -> expand abbreviations -> remove generic suffixes -> normalize whitespace
+- Default abbreviation dictionary: MED CTR, HOSP, HLTH, SYS, SURG, REHAB, COMM, UNIV, etc. (no ST->SAINT)
+- Generic suffix removal handles preserved directional (EAST/WEST/NORTH/SOUTH) and campus (MAIN/DOWNTOWN/CAMPUS/MIDTOWN/UPTOWN) tokens
+- Suffix removal strips trailing preserved tokens first, removes suffix from core, re-appends preserved tokens
+- Files changed: asre/facility/normalizer.py (new), tests/unit/test_facility_normalizer.py (new)
+- **Learnings for future iterations:**
+  - "ST" must NOT be expanded to "SAINT" — PRD expects "ST MARYS" not "SAINT MARYS"
+  - Abbreviations that expand to generic suffixes (HOSP->HOSPITAL, MED CTR->MEDICAL CENTER) get removed when trailing — test abbreviation expansion with non-trailing positions
+  - Generic suffix removal must be aware of preserved tokens: strip them before suffix check, re-append after
+  - Multi-word abbreviation expansion (e.g., "MED CTR") must happen before single-word to avoid partial matches
+  - Word boundary regex (`\b`) for abbreviation matching prevents partial replacements (e.g., "HOSPITAL" doesn't re-expand "HOSP" inside it)
+  - 38 tests covering: construction (2), uppercase/punctuation (5), abbreviation expansion (3), suffix removal (7), directional preservation (4), campus preservation (5), whitespace (2), PRD acceptance criteria (5), edge cases (5)
+  - Total test count: 534 passed + 16 skipped (integration tests skip without Postgres)
 ---
