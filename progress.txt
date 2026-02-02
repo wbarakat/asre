@@ -30,7 +30,7 @@
 ## Phase 2: Configuration System (US-012 to US-017)
 - [x] US-012: Define global config Pydantic schema (priority 12)
 - [x] US-013: Define source config Pydantic schema (priority 13)
-- [ ] US-014: Define facility alias config schema (priority 14)
+- [x] US-014: Define facility alias config schema (priority 14)
 - [ ] US-015: Implement YAML config loader with env var substitution (priority 15)
 - [ ] US-016: Create example customer config (priority 16)
 - [ ] US-017: Implement CLI skeleton (priority 17)
@@ -303,4 +303,16 @@
   - PairedEvents needs a sub-model (PairedEventConfig) for each side (admit/discharge)
   - 33 tests covering: all 8 sub-models individually + SourceConfig for each source type (ADT, claims, auth) + validation rules + optional fields
   - Total test count: 128 (95 existing + 33 new)
+---
+
+## 2026-02-02 - US-014
+- Implemented: Facility alias config Pydantic schema in `asre/config/facility_alias_schema.py` with 2 models
+- Models: FacilityAlias (canonical_id, canonical_name, npi, ccn, facility_type, aliases) and FacilityAliasConfig (facilities list)
+- Files changed: asre/config/facility_alias_schema.py (new), tests/unit/test_facility_alias_schema.py (new)
+- **Learnings for future iterations:**
+  - FacilityAlias includes `facility_type` field (not in PRD acceptance criteria but needed per SPEC §7.4 and used by US-040 facility registry)
+  - Same pattern as other config schemas: required fields first, optional with defaults
+  - `aliases: list[str] = []` defaults to empty list (Pydantic deep-copies mutable defaults)
+  - 12 tests covering: FacilityAlias with all fields, required-only, missing fields, defaults + FacilityAliasConfig with valid/empty/default/invalid facilities
+  - Total test count: 140 (128 existing + 12 new)
 ---
