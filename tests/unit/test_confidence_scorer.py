@@ -476,3 +476,136 @@ class TestPenaltyApplication:
         score = scorer.compute_score(rec)
 
         assert score == 0.25
+
+
+class TestConfidenceFlagsPopulation:
+    """Tests for US-066: Populate confidence_flags array.
+
+    confidence_flags should contain names of all active signals (signal=1)
+    AND all applied penalties.
+    """
+
+    def test_claims_and_missing_discharge_flags(self) -> None:
+        """Encounter with claims + missing discharge produces flags
+        including both HAS_CLAIMS and MISSING_DISCHARGE."""
+        events = [
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+        ]
+        enc = _make_encounter(events)
+        # Pre-existing penalty flags from reconcile stage
+        rec = _make_reconciled(enc, flags=["MISSING_DISCHARGE"])
+
+        scorer = ConfidenceScorer()
+        flags = scorer.build_confidence_flags(rec)
+
+        # Active signals should be present
+        assert "HAS_CLAIMS" in flags
+        assert "TIMESTAMPS_CONSISTENT" in flags  # no TIMESTAMP_MISMATCH
+        assert "FACILITY_RESOLVED" in flags
+
+        # Penalty flags should also be present
+        assert "MISSING_DISCHARGE" in flags
+
+        # Inactive signals should NOT be present
+        assert "HAS_ADT_ADMIT" not in flags
+        assert "HAS_ADT_DISCHARGE" not in flags
+        assert "HAS_AUTH" not in flags
+
+    def test_all_signals_and_no_penalties(self) -> None:
+        """All signals active and no penalties produces only signal flags."""
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="DISCHARGE",
+                source_system="adt_vendor_x",
+                discharge_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="AUTH_APPROVED",
+                source_system="auth_portal",
+            ),
+        ]
+        enc = _make_encounter(events, has_discharge=True, status="closed")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        flags = scorer.build_confidence_flags(rec)
+
+        # All 7 signals active
+        assert "HAS_CLAIMS" in flags
+        assert "HAS_ADT_ADMIT" in flags
+        assert "HAS_ADT_DISCHARGE" in flags
+        assert "HAS_AUTH" in flags
+        assert "FACILITY_RESOLVED" in flags
+        assert "TIMESTAMPS_CONSISTENT" in flags
+        assert "PATIENT_CLASS_CONSISTENT" in flags
+        assert len(flags) == 7  # no penalties
+
+    def test_penalty_flags_included_when_applied(self) -> None:
+        """Penalty flags from reconcile stage are included in output."""
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="inpatient",
+            ),
+        ]
+        enc = _make_encounter(events, facility_canonical_id=None)
+        rec = _make_reconciled(
+            enc,
+            flags=["MISSING_DISCHARGE", "FACILITY_UNRESOLVED", "TIMESTAMP_MISMATCH"],
+        )
+
+        scorer = ConfidenceScorer()
+        flags = scorer.build_confidence_flags(rec)
+
+        # Penalty flags present
+        assert "MISSING_DISCHARGE" in flags
+        assert "FACILITY_UNRESOLVED" in flags
+        assert "TIMESTAMP_MISMATCH" in flags
+
+        # Active signals present
+        assert "HAS_ADT_ADMIT" in flags
+
+        # TIMESTAMPS_CONSISTENT should NOT be present (TIMESTAMP_MISMATCH disables it)
+        assert "TIMESTAMPS_CONSISTENT" not in flags
+        # FACILITY_RESOLVED should NOT be present (facility_canonical_id is None)
+        assert "FACILITY_RESOLVED" not in flags
+
+    def test_no_duplicate_flags(self) -> None:
+        """Flags list contains no duplicates even if penalty name matches signal."""
+        events = [
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+        ]
+        enc = _make_encounter(events)
+        rec = _make_reconciled(enc, flags=["CLAIMS_ONLY_ENCOUNTER"])
+
+        scorer = ConfidenceScorer()
+        flags = scorer.build_confidence_flags(rec)
+
+        # No duplicates
+        assert len(flags) == len(set(flags))

@@ -119,6 +119,23 @@ class ConfidenceScorer:
         penalty = self._compute_penalty(encounter)
         return max(0.0, base_score + penalty)
 
+    def build_confidence_flags(self, encounter: ReconciledEncounter) -> list[str]:
+        """Build the confidence_flags list with active signals and applied penalties.
+
+        Includes:
+        - Signal names where signal is active (True)
+        - Penalty flag names that are present on the encounter
+        """
+        signals = self.evaluate_signals(encounter)
+        flags: list[str] = [name for name, active in signals.items() if active]
+
+        # Add penalty flags from encounter (already set by reconcile stage)
+        for flag in encounter.confidence_flags:
+            if flag not in flags:
+                flags.append(flag)
+
+        return flags
+
     def _compute_penalty(self, encounter: ReconciledEncounter) -> float:
         """Compute total penalty from encounter's confidence_flags."""
         flags = encounter.confidence_flags
