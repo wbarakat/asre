@@ -3,6 +3,8 @@
 - ConfidenceScorer signal evaluation: HAS_CLAIMS/HAS_ADT_ADMIT/HAS_ADT_DISCHARGE/HAS_AUTH from source_system prefix; FACILITY_RESOLVED from facility_canonical_id not None; TIMESTAMPS_CONSISTENT from no TIMESTAMP_MISMATCH flag; PATIENT_CLASS_CONSISTENT from <=1 distinct patient_class values
 - ConfidenceScorer.max_score = sum of all signal weights (default 100); score = active_weight_sum / max_score, then penalties subtracted, floored at 0.0
 - ConfidenceScorer accepts optional `penalty_weights: dict[str, float]`; defaults in `_DEFAULT_PENALTY_WEIGHTS` (9 penalties)
+- ConfidenceScorer accepts optional `stale_thresholds: dict[str, int]`; defaults in `_DEFAULT_STALE_THRESHOLDS` (facility-type-aware days)
+- ConfidenceScorer.detect_stale_encounter(enc, now, facility_type) returns list[str]; ScoreStage must look up facility_type from FacilityRegistry before calling
 - TIMESTAMP_MISMATCH is dual-purpose: disables TIMESTAMPS_CONSISTENT signal AND applies -0.10 penalty; tests must account for both effects
 - _extract_source_type() pattern reused across modules: prefix-based (claims/auth/adt) from source_system name
 - Reconciler flag methods: flag_missing_discharge(enc, now, open_threshold_hours=48), flag_orphan_discharge(enc), flag_claims_only(enc), flag_adt_only(enc, now, claims_lag_days=45) — all return list[str]
@@ -1281,4 +1283,24 @@
   - FACILITY_RESOLVED is excluded when facility_canonical_id is None (via evaluate_signals logic)
   - 4 tests covering: claims+missing_discharge flags (1), all signals no penalties (1), penalty flags included (1), no duplicate flags (1)
   - Total test count: 902 passed (unit tests)
+---
+
+## 2026-02-02 - US-067
+- Implemented: Stale encounter detection with facility-type-aware thresholds in `asre/score/confidence_scorer.py`
+- Added `detect_stale_encounter(encounter, now, facility_type)` method to ConfidenceScorer
+- Added `stale_thresholds` parameter to ConfidenceScorer constructor with defaults matching SPEC
+- Default thresholds: acute (30d), ed_standalone (3d), ltach (90d), snf (120d), rehab (60d), psych (90d), default (30d)
+- Logic: only open encounters (has_discharge=False) can be stale; finds earliest admit-type event timestamp; compares open duration against threshold
+- Unknown facility_type falls back to "default" threshold
+- Files changed:
+  - `asre/score/confidence_scorer.py` — added `_DEFAULT_STALE_THRESHOLDS`, `stale_thresholds` param, `detect_stale_encounter()` method
+  - `tests/unit/test_confidence_scorer.py` — added `TestStaleEncounterDetection` class with 6 tests
+  - `prd.json` — marked US-067 passes: true
+- **Learnings for future iterations:**
+  - detect_stale_encounter returns list[str] (either ["STALE_OPEN_ENCOUNTER"] or []) for consistency with other flag methods
+  - Stale detection uses _ADMIT_EVENT_TYPES to find earliest admit timestamp (same set used by other scorer methods)
+  - facility_type comes from FacilityRegistry.get_facility() — the ScoreStage (US-068) will need to look up facility_type before calling detect_stale_encounter
+  - Custom stale_thresholds can be passed to ConfidenceScorer for per-customer configuration
+  - 6 tests covering: acute open 31d (stale), SNF open 100d (not stale), unknown type 31d (stale with default), closed encounter (never stale), acute open 29d (not stale), custom thresholds
+  - Total test count: 908 passed (unit tests)
 ---

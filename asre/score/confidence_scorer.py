@@ -1,4 +1,4 @@
-"""ConfidenceScorer - weighted confidence scoring for encounters (US-064).
+"""ConfidenceScorer - weighted confidence scoring for encounters (US-064, US-067).
 
 Computes: base_score = sum(signal_i * weight_i) / sum(weight_i)
 
@@ -8,10 +8,13 @@ Computes: base_score = sum(signal_i * weight_i) / sum(weight_i)
   PATIENT_CLASS_CONSISTENT (10)
 
 Maximum raw score = 100, normalized to 1.0.
+
+US-067: Stale encounter detection with facility-type-aware thresholds.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -46,6 +49,16 @@ _DISCHARGE_EVENT_TYPES: set[str] = {
     "DISCHARGE", "CLAIM_DISCHARGE", "ED_DEPARTURE", "OBS_END",
 }
 
+_DEFAULT_STALE_THRESHOLDS: dict[str, int] = {
+    "acute": 30,
+    "ed_standalone": 3,
+    "ltach": 90,
+    "snf": 120,
+    "rehab": 60,
+    "psych": 90,
+    "default": 30,
+}
+
 
 class ConfidenceScorer:
     """Computes a weighted confidence score for encounters."""
@@ -54,9 +67,11 @@ class ConfidenceScorer:
         self,
         signal_weights: dict[str, int] | None = None,
         penalty_weights: dict[str, float] | None = None,
+        stale_thresholds: dict[str, int] | None = None,
     ) -> None:
         self.signal_weights = signal_weights or dict(_DEFAULT_SIGNAL_WEIGHTS)
         self.penalty_weights = penalty_weights or dict(_DEFAULT_PENALTY_WEIGHTS)
+        self.stale_thresholds = stale_thresholds or dict(_DEFAULT_STALE_THRESHOLDS)
         self.max_score = sum(self.signal_weights.values())
 
     def evaluate_signals(self, encounter: ReconciledEncounter) -> dict[str, bool]:
@@ -135,6 +150,50 @@ class ConfidenceScorer:
                 flags.append(flag)
 
         return flags
+
+    def detect_stale_encounter(
+        self,
+        encounter: ReconciledEncounter,
+        *,
+        now: datetime,
+        facility_type: str | None = None,
+    ) -> list[str]:
+        """Detect if an encounter is stale based on facility-type-aware thresholds.
+
+        Args:
+            encounter: The reconciled encounter to check.
+            now: Current reference time for computing open duration.
+            facility_type: The facility type (acute, snf, ltach, etc.).
+                If None or not in thresholds, uses "default" threshold.
+
+        Returns:
+            List of flags (["STALE_OPEN_ENCOUNTER"] or []).
+        """
+        # Only open encounters can be stale
+        if encounter.has_discharge:
+            return []
+
+        # Find earliest admit-type event timestamp
+        earliest_admit_ts: datetime | None = None
+        for evt in encounter.events:
+            if evt.event_type in _ADMIT_EVENT_TYPES:
+                if earliest_admit_ts is None or evt.event_ts < earliest_admit_ts:
+                    earliest_admit_ts = evt.event_ts
+
+        if earliest_admit_ts is None:
+            return []
+
+        # Determine threshold in days
+        threshold_days = self.stale_thresholds.get(
+            facility_type or "default",
+            self.stale_thresholds.get("default", 30),
+        )
+
+        open_duration = now - earliest_admit_ts
+        if open_duration > timedelta(days=threshold_days):
+            return ["STALE_OPEN_ENCOUNTER"]
+
+        return []
 
     def _compute_penalty(self, encounter: ReconciledEncounter) -> float:
         """Compute total penalty from encounter's confidence_flags."""

@@ -609,3 +609,249 @@ class TestConfidenceFlagsPopulation:
 
         # No duplicates
         assert len(flags) == len(set(flags))
+
+
+class TestStaleEncounterDetection:
+    """Tests for US-067: Stale encounter detection with facility-type-aware thresholds.
+
+    STALE_OPEN_ENCOUNTER flag applied when encounter is open (no discharge) AND
+    open duration exceeds facility-type threshold.
+
+    Default thresholds: acute (30 days), ed_standalone (3 days), ltach (90 days),
+    snf (120 days), rehab (60 days), psych (90 days), default (30 days).
+    """
+
+    def test_acute_facility_open_31_days_produces_stale_flag(self) -> None:
+        """Acute facility, open 31 days produces STALE_OPEN_ENCOUNTER."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 2, 1, 10, 0, tzinfo=timezone.utc)  # 31 days later
+
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+            ),
+        ]
+        events[0] = CanonicalEvent(
+            event_id="evt_001",
+            patient_key="PAT_001",
+            event_type="ADMIT",
+            event_ts=admit_ts,
+            source_system="adt_vendor_x",
+            source_record_id="src_001",
+            facility_raw="Test Hospital",
+            facility_canonical_id="FAC_001",
+            admit_flag=True,
+            discharge_flag=False,
+            auth_flag=False,
+            patient_class="inpatient",
+            drg=None,
+            principal_diagnosis=None,
+            diagnosis_codes=None,
+            auth_status=None,
+            payer_id=None,
+            ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            batch_id="batch_001",
+            _raw_payload={},
+        )
+
+        enc = _make_encounter(events, has_discharge=False, status="open")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type="acute")
+
+        assert "STALE_OPEN_ENCOUNTER" in stale_flags
+
+    def test_snf_open_100_days_no_stale_flag(self) -> None:
+        """SNF, open 100 days produces no stale flag (threshold 120)."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 4, 10, 10, 0, tzinfo=timezone.utc)  # ~100 days later
+
+        events = [
+            CanonicalEvent(
+                event_id="evt_001",
+                patient_key="PAT_001",
+                event_type="ADMIT",
+                event_ts=admit_ts,
+                source_system="adt_vendor_x",
+                source_record_id="src_001",
+                facility_raw="SNF Facility",
+                facility_canonical_id="FAC_002",
+                admit_flag=True,
+                discharge_flag=False,
+                auth_flag=False,
+                patient_class="inpatient",
+                drg=None,
+                principal_diagnosis=None,
+                diagnosis_codes=None,
+                auth_status=None,
+                payer_id=None,
+                ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                batch_id="batch_001",
+                _raw_payload={},
+            ),
+        ]
+
+        enc = _make_encounter(events, has_discharge=False, status="open")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type="snf")
+
+        assert "STALE_OPEN_ENCOUNTER" not in stale_flags
+        assert stale_flags == []
+
+    def test_unknown_facility_type_open_31_days_produces_stale_flag(self) -> None:
+        """Unknown facility type, open 31 days produces STALE_OPEN_ENCOUNTER (default 30)."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 2, 1, 10, 0, tzinfo=timezone.utc)  # 31 days later
+
+        events = [
+            CanonicalEvent(
+                event_id="evt_001",
+                patient_key="PAT_001",
+                event_type="ADMIT",
+                event_ts=admit_ts,
+                source_system="adt_vendor_x",
+                source_record_id="src_001",
+                facility_raw="Unknown Facility",
+                facility_canonical_id="FAC_003",
+                admit_flag=True,
+                discharge_flag=False,
+                auth_flag=False,
+                patient_class="inpatient",
+                drg=None,
+                principal_diagnosis=None,
+                diagnosis_codes=None,
+                auth_status=None,
+                payer_id=None,
+                ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                batch_id="batch_001",
+                _raw_payload={},
+            ),
+        ]
+
+        enc = _make_encounter(events, has_discharge=False, status="open")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type=None)
+
+        assert "STALE_OPEN_ENCOUNTER" in stale_flags
+
+    def test_closed_encounter_never_stale(self) -> None:
+        """An encounter with a discharge is never flagged as stale."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, 10, 0, tzinfo=timezone.utc)  # 150 days later
+
+        events = [
+            CanonicalEvent(
+                event_id="evt_001",
+                patient_key="PAT_001",
+                event_type="ADMIT",
+                event_ts=admit_ts,
+                source_system="adt_vendor_x",
+                source_record_id="src_001",
+                facility_raw="Test Hospital",
+                facility_canonical_id="FAC_001",
+                admit_flag=True,
+                discharge_flag=False,
+                auth_flag=False,
+                patient_class="inpatient",
+                drg=None,
+                principal_diagnosis=None,
+                diagnosis_codes=None,
+                auth_status=None,
+                payer_id=None,
+                ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                batch_id="batch_001",
+                _raw_payload={},
+            ),
+        ]
+
+        enc = _make_encounter(events, has_discharge=True, status="closed")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type="acute")
+
+        assert stale_flags == []
+
+    def test_acute_facility_open_29_days_no_stale_flag(self) -> None:
+        """Acute facility open 29 days is within threshold (30), no stale flag."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 30, 10, 0, tzinfo=timezone.utc)  # 29 days later
+
+        events = [
+            CanonicalEvent(
+                event_id="evt_001",
+                patient_key="PAT_001",
+                event_type="ADMIT",
+                event_ts=admit_ts,
+                source_system="adt_vendor_x",
+                source_record_id="src_001",
+                facility_raw="Test Hospital",
+                facility_canonical_id="FAC_001",
+                admit_flag=True,
+                discharge_flag=False,
+                auth_flag=False,
+                patient_class="inpatient",
+                drg=None,
+                principal_diagnosis=None,
+                diagnosis_codes=None,
+                auth_status=None,
+                payer_id=None,
+                ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                batch_id="batch_001",
+                _raw_payload={},
+            ),
+        ]
+
+        enc = _make_encounter(events, has_discharge=False, status="open")
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type="acute")
+
+        assert stale_flags == []
+
+    def test_custom_stale_thresholds(self) -> None:
+        """Custom stale thresholds override defaults."""
+        admit_ts = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 11, 10, 0, tzinfo=timezone.utc)  # 10 days later
+
+        events = [
+            CanonicalEvent(
+                event_id="evt_001",
+                patient_key="PAT_001",
+                event_type="ADMIT",
+                event_ts=admit_ts,
+                source_system="adt_vendor_x",
+                source_record_id="src_001",
+                facility_raw="Test Hospital",
+                facility_canonical_id="FAC_001",
+                admit_flag=True,
+                discharge_flag=False,
+                auth_flag=False,
+                patient_class="inpatient",
+                drg=None,
+                principal_diagnosis=None,
+                diagnosis_codes=None,
+                auth_status=None,
+                payer_id=None,
+                ingested_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                batch_id="batch_001",
+                _raw_payload={},
+            ),
+        ]
+
+        enc = _make_encounter(events, has_discharge=False, status="open")
+        rec = _make_reconciled(enc, flags=[])
+
+        custom_thresholds = {"acute": 5, "default": 5}
+        scorer = ConfidenceScorer(stale_thresholds=custom_thresholds)
+        stale_flags = scorer.detect_stale_encounter(rec, now=now, facility_type="acute")
+
+        assert "STALE_OPEN_ENCOUNTER" in stale_flags
