@@ -223,6 +223,15 @@ class PipelineRunner:
             mode=self.mode,
         )
 
+        # Set up audit logger if adapter is available
+        adapter = self._config.get("adapter")
+        if adapter is not None:
+            from asre.pipeline.audit import AuditLogger
+
+            audit_logger = AuditLogger(adapter=adapter, run_id=self.run_id)
+            audit_logger.ensure_table()
+            context.config["audit_logger"] = audit_logger
+
         self.stage_metrics = []
 
         for idx, stage_name in enumerate(_STAGE_ORDER):

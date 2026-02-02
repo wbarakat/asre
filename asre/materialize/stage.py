@@ -335,6 +335,33 @@ class MaterializeStage(PipelineStage):
                 count = adapter.write_records(TABLE_NAME, update_records)
                 self.encounters_updated = count
 
+            # Audit logging
+            audit_logger = context.config.get("audit_logger")
+            if audit_logger is not None:
+                audit_entries: list[dict[str, str]] = []
+                for rec in insert_records:
+                    audit_entries.append({
+                        "action": "materialize",
+                        "entity_type": "encounter",
+                        "entity_id": rec["encounter_id"],
+                        "detail": (
+                            f"Created encounter: encounter_type={rec['encounter_type']}, "
+                            f"status={rec['status']}"
+                        ),
+                    })
+                for rec in update_records:
+                    audit_entries.append({
+                        "action": "materialize",
+                        "entity_type": "encounter",
+                        "entity_id": rec["encounter_id"],
+                        "detail": (
+                            f"Updated encounter: encounter_type={rec['encounter_type']}, "
+                            f"status={rec['status']}"
+                        ),
+                    })
+                if audit_entries:
+                    audit_logger.log_batch(audit_entries)
+
             # Write detail rows
             if detail_records:
                 detail_count: int = adapter.write_records(
