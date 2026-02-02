@@ -175,12 +175,45 @@ class PipelineRunner:
             fuzzy_threshold=fuzzy_threshold,
         )
 
-    def run(self) -> dict[str, Any]:
+    def _get_checkpoint_manager(self) -> Any:
+        """Get a CheckpointManager if an adapter is available in config."""
+        adapter = self._config.get("adapter")
+        if adapter is None:
+            return None
+        from asre.pipeline.checkpoint import CheckpointManager
+
+        return CheckpointManager(adapter)
+
+    def run(self, resume_run_id: str | None = None) -> dict[str, Any]:
         """Execute the full pipeline.
+
+        Args:
+            resume_run_id: If provided, resume from the last completed stage
+                of the given run. The checkpoint must exist and be resumable.
 
         Returns:
             Summary dict with run_id, mode, and stage metrics.
         """
+        checkpoint_mgr = self._get_checkpoint_manager()
+        skip_through_index = -1
+
+        if resume_run_id is not None:
+            if checkpoint_mgr is None:
+                raise ValueError(
+                    f"Cannot resume run '{resume_run_id}': no adapter configured"
+                )
+            cp = checkpoint_mgr.load_checkpoint(resume_run_id)
+            if cp is None:
+                raise ValueError(
+                    f"Checkpoint for run '{resume_run_id}' not found"
+                )
+            if cp.get("status") == "completed":
+                raise ValueError(
+                    f"Run '{resume_run_id}' already completed"
+                )
+            skip_through_index = cp["stage_index"]
+            self.run_id = resume_run_id
+
         batch = EventBatch(batch_id=self.run_id, events=[])
         context = PipelineContext(
             run_id=self.run_id,
@@ -190,11 +223,34 @@ class PipelineRunner:
 
         self.stage_metrics = []
 
-        for stage_name in _STAGE_ORDER:
+        for idx, stage_name in enumerate(_STAGE_ORDER):
+            # Skip stages that were already completed in a prior run
+            if idx <= skip_through_index:
+                logger.info(
+                    "Skipping stage: %s (already completed, run_id=%s)",
+                    stage_name,
+                    self.run_id,
+                )
+                continue
+
             stage = self._stages[stage_name]
 
             logger.info("Starting stage: %s (run_id=%s)", stage_name, self.run_id)
-            batch = stage.run(batch, context)
+            try:
+                batch = stage.run(batch, context)
+            except Exception:
+                if checkpoint_mgr is not None:
+                    # Record the failure — last_completed_stage is the
+                    # previous stage (idx-1), but we store the failing
+                    # stage name so resume knows where to retry.
+                    prev_stage = _STAGE_ORDER[idx - 1] if idx > 0 else stage_name
+                    checkpoint_mgr.mark_failed(
+                        run_id=self.run_id,
+                        stage_name=prev_stage,
+                        stage_index=idx - 1 if idx > 0 else 0,
+                        error=f"Stage {stage_name} failed",
+                    )
+                raise
             logger.info("Completed stage: %s", stage_name)
 
             # Data handoff between stages
@@ -203,6 +259,18 @@ class PipelineRunner:
             # Collect metrics
             if hasattr(stage, "metrics") and hasattr(stage.metrics, "to_dict"):
                 self.stage_metrics.append(stage.metrics.to_dict())
+
+            # Save checkpoint after successful stage
+            if checkpoint_mgr is not None:
+                checkpoint_mgr.save_checkpoint(
+                    run_id=self.run_id,
+                    stage_name=stage_name,
+                    stage_index=idx,
+                )
+
+        # Mark run as completed
+        if checkpoint_mgr is not None:
+            checkpoint_mgr.mark_completed(self.run_id)
 
         return {
             "run_id": self.run_id,

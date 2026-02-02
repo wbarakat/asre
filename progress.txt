@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- CheckpointManager in `asre/pipeline/checkpoint.py`: stores run progress in asre_checkpoints table; save_checkpoint(), load_checkpoint(), mark_completed(), mark_failed() methods
+- PipelineRunner.run() accepts optional `resume_run_id` param; skips stages up to checkpoint's stage_index; saves checkpoint after each stage; marks failed/completed
+- PipelineRunner._get_checkpoint_manager() returns CheckpointManager if config has "adapter" key, else None (no checkpointing without adapter)
 - PipelineRunner in `asre/pipeline/runner.py`: orchestrates 9 stages in order; data handoff via _handoff() method after each stage
 - PipelineRunner._stages is an OrderedDict[str, PipelineStage]; can be replaced in tests with `runner._stages = {...}`
 - PipelineRunner generates run_id as `run_YYYYMMDD_HHMMSS` format
@@ -1348,4 +1351,21 @@
   - _NoOpStage provides materialize and quality_check placeholders — future stories (US-072, US-085) will replace these
   - facility_registry_map is populated from stage._registry after facility_normalize; ScoreStage depends on this
   - Total test count: 933 passed (unit tests)
+---
+
+## 2026-02-02 - US-070
+- What was implemented: Stage checkpointing with CheckpointManager class and PipelineRunner resume support
+- Files changed:
+  - `asre/pipeline/checkpoint.py` — New CheckpointManager class with save_checkpoint, load_checkpoint, mark_completed, mark_failed, ensure_table methods
+  - `asre/pipeline/runner.py` — Updated PipelineRunner.run() to accept resume_run_id, save checkpoints after each stage, record failures, mark completion
+  - `tests/unit/test_checkpoint.py` — 12 tests covering checkpoint CRUD, pipeline integration (save after each stage, resume, failure recording, error cases)
+  - `prd.json` — marked US-070 passes: true
+  - `progress.txt` — updated codebase patterns and progress
+- **Learnings for future iterations:**
+  - CheckpointManager uses asre_checkpoints table (separate from asre_metadata) with run_id as primary key
+  - PipelineRunner only creates CheckpointManager when config has "adapter" key — tests without adapter skip checkpointing silently
+  - Resume validates: checkpoint exists (ValueError "not found"), checkpoint not completed (ValueError "already completed")
+  - On stage failure, checkpoint records the PREVIOUS completed stage's index so resume starts at the failed stage
+  - _STAGE_ORDER list indices are used as stage_index in checkpoints for resume position tracking
+  - Total test count: 945 passed (unit tests)
 ---
