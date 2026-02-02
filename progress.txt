@@ -1,4 +1,12 @@
 ## Codebase Patterns
+- MaterializeStage in `asre/materialize/stage.py`: encounters_in set by runner; writes to admission_events_unified AND asre_encounters_detail; uses merge/upsert (DELETE + INSERT) keyed on encounter_id
+- assign_event_roles(enc) in materialize/stage.py: assigns role_in_encounter to each event using reconciled_timestamps; admit_anchor matches admit_ts + admit event type, discharge_anchor matches discharge_ts + discharge event type, "duplicate" preserved from dedup, everything else is "supporting"
+- DETAIL_TABLE_NAME = "asre_encounters_detail" in materialize/stage.py; event_to_detail_record(event, encounter_id) converts to flat dict with encounter_id, event_id, event_type, event_ts, source_system, role_in_encounter
+- When adding new write_records calls to MaterializeStage, existing tests using assert_called_once() on adapter.write_records will break; filter by table name instead
+- encounter_to_record() converts ReconciledEncounter to flat dict; uses reconciled_timestamps and reconciled_classification when available; JSON-serializes list fields (source_event_ids, confidence_flags, etc.)
+- PipelineRunner._handoff() for "score" stage passes scored encounters to MaterializeStage.encounters_in
+- MaterializeStage._ensure_table() creates admission_events_unified with CREATE TABLE IF NOT EXISTS; _load_existing_ids() reads current encounter_ids for upsert logic
+- For mypy strict with ReconciledEncounter (uses __getattr__): explicitly annotate local variables for datetime values from delegated access to avoid `Returning Any` errors
 - CLI `asre run` command in `asre/cli/main.py`: accepts `--mode full|incremental` (default incremental), `--resume <run_id>`, `--config-path`, `--customer-id`; uses `_create_pipeline_runner()` to build runner
 - `_create_pipeline_runner(config_path, customer_id, mode)` in cli/main.py: loads config, creates adapter, builds PipelineRunner — mock this in CLI tests
 - CheckpointManager in `asre/pipeline/checkpoint.py`: stores run progress in asre_checkpoints table; save_checkpoint(), load_checkpoint(), mark_completed(), mark_failed() methods
@@ -1383,4 +1391,39 @@
   - Click CLI commands use `@cli.command("name")` decorator; `--resume` uses `"resume_run_id"` as param name via Click's `@click.option` naming
   - `_create_pipeline_runner` is the seam for testing: mock it in CLI tests to avoid real config/adapter setup
   - Total test count: 956 passed (unit tests)
+---
+
+## 2026-02-02 - US-072
+- Implemented encounter materialization stage (MaterializeStage)
+- Files changed:
+  - `asre/materialize/__init__.py` (new)
+  - `asre/materialize/stage.py` (new) — MaterializeStage + encounter_to_record conversion
+  - `asre/pipeline/runner.py` — replaced _NoOpStage with MaterializeStage, added score->materialize handoff
+  - `tests/unit/test_materialize_stage.py` (new) — 20 tests covering conversion and stage behavior
+- **Learnings for future iterations:**
+  - ReconciledEncounter uses `__getattr__` delegation — mypy strict requires explicit `datetime` type annotations for delegated attribute access to avoid `Returning Any` errors
+  - Merge/upsert pattern for Postgres: load existing IDs, then DELETE+INSERT for updates (simple and portable)
+  - encounter_to_record serializes list/dict fields to JSON strings for storage (source_event_ids, confidence_flags, diagnosis_codes, transfer_chain)
+  - ASRE_VERSION constant is in `asre/materialize/stage.py`; set to "0.1.0"
+  - Total test count: 976 passed (unit tests)
+---
+
+## 2026-02-02 - US-073
+- Implemented encounters detail materialization (asre_encounters_detail table)
+- Added assign_event_roles() function that assigns role_in_encounter to each event based on reconciled timestamps: admit_anchor, discharge_anchor, supporting, duplicate (preserved from dedup)
+- Added event_to_detail_record() function to convert CanonicalEvent to detail table row
+- Updated MaterializeStage to create asre_encounters_detail table and write detail rows for each event in each encounter
+- Added DETAIL_TABLE_NAME constant and _ensure_detail_table() method
+- Updated existing test assertions to filter write_records calls by table name
+- Files changed:
+  - `asre/materialize/stage.py` — added assign_event_roles, event_to_detail_record, DETAIL_TABLE_NAME, _ensure_detail_table; updated run() to write detail rows
+  - `tests/unit/test_detail_materialization.py` (new) — 15 tests covering role assignment, detail record conversion, and stage integration
+  - `tests/unit/test_materialize_stage.py` — updated 3 tests to handle additional write_records/execute_ddl calls for detail table
+  - `prd.json` — marked US-073 as passes: true
+- **Learnings for future iterations:**
+  - assign_event_roles uses reconciled_timestamps to find anchor events; matches by event_ts AND event_type (admit types for admit_anchor, discharge types for discharge_anchor)
+  - Events already marked "duplicate" by dedup stage are preserved; all other non-anchor events get "supporting"
+  - When no reconciled_timestamps exist, all non-duplicate events default to "supporting"
+  - Existing tests that use assert_called_once() on adapter mocks break when new write_records calls are added; always filter by table name
+  - Total test count: 991 passed (unit tests)
 ---

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from asre.models.batch import EventBatch
+from asre.models.canonical_event import CanonicalEvent
 from asre.observability.metrics import StageMetrics
 from asre.pipeline.runner import PipelineContext, PipelineStage
 from asre.reconcile.stage import ReconciledEncounter
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 ASRE_VERSION = "0.1.0"
 
 TABLE_NAME = "admission_events_unified"
+DETAIL_TABLE_NAME = "asre_encounters_detail"
+
+
+# Admit and discharge event types for role assignment
+_ADMIT_EVENT_TYPES = {"ADMIT", "CLAIM_ADMIT", "ED_ARRIVAL", "OBS_START"}
+_DISCHARGE_EVENT_TYPES = {"DISCHARGE", "CLAIM_DISCHARGE", "ED_DEPARTURE", "OBS_END"}
 
 
 def _extract_source_type(source_system: str) -> str:
@@ -31,6 +38,69 @@ def _extract_source_type(source_system: str) -> str:
         if lower.startswith(prefix):
             return prefix
     return lower
+
+
+def assign_event_roles(enc: ReconciledEncounter) -> None:
+    """Assign role_in_encounter to each event in the encounter.
+
+    Roles:
+    - admit_anchor: event whose timestamp matches reconciled admit_ts
+    - discharge_anchor: event whose timestamp matches reconciled discharge_ts
+    - duplicate: preserved from dedup stage (already set)
+    - supporting: all other events
+    """
+    if enc.reconciled_timestamps is None:
+        # No reconciled timestamps — mark all non-duplicates as supporting
+        for event in enc.events:
+            if event.role_in_encounter != "duplicate":
+                event.role_in_encounter = "supporting"
+        return
+
+    admit_ts = enc.reconciled_timestamps.admit_ts
+    discharge_ts = enc.reconciled_timestamps.discharge_ts
+
+    admit_anchor_found = False
+    discharge_anchor_found = False
+
+    for event in enc.events:
+        # Skip events already marked as duplicate
+        if event.role_in_encounter == "duplicate":
+            continue
+
+        # Check for admit anchor: matching timestamp + admit event type
+        if (
+            not admit_anchor_found
+            and event.event_ts == admit_ts
+            and event.event_type in _ADMIT_EVENT_TYPES
+        ):
+            event.role_in_encounter = "admit_anchor"
+            admit_anchor_found = True
+        # Check for discharge anchor: matching timestamp + discharge event type
+        elif (
+            not discharge_anchor_found
+            and discharge_ts is not None
+            and event.event_ts == discharge_ts
+            and event.event_type in _DISCHARGE_EVENT_TYPES
+        ):
+            event.role_in_encounter = "discharge_anchor"
+            discharge_anchor_found = True
+        else:
+            event.role_in_encounter = "supporting"
+
+
+def event_to_detail_record(
+    event: CanonicalEvent,
+    encounter_id: str,
+) -> dict[str, Any]:
+    """Convert a CanonicalEvent to a flat dict for asre_encounters_detail."""
+    return {
+        "encounter_id": encounter_id,
+        "event_id": event.event_id,
+        "event_type": event.event_type,
+        "event_ts": _ts_str(event.event_ts),
+        "source_system": event.source_system,
+        "role_in_encounter": event.role_in_encounter,
+    }
 
 
 def encounter_to_record(
@@ -189,6 +259,7 @@ class MaterializeStage(PipelineStage):
         self.encounters_materialized: int = 0
         self.encounters_inserted: int = 0
         self.encounters_updated: int = 0
+        self.detail_rows_written: int = 0
 
     def run(self, batch: EventBatch, context: PipelineContext) -> EventBatch:
         """Execute the materialize stage.
@@ -212,16 +283,21 @@ class MaterializeStage(PipelineStage):
                 self.metrics.records_out = 0
                 return batch
 
-            # Ensure table exists
+            # Ensure tables exist
             self._ensure_table(adapter)
+            self._ensure_detail_table(adapter)
 
             # Load existing encounter_ids for upsert logic
             existing_ids = self._load_existing_ids(adapter)
 
             insert_records: list[dict[str, Any]] = []
             update_records: list[dict[str, Any]] = []
+            detail_records: list[dict[str, Any]] = []
 
             for enc in encounters:
+                # Assign roles to events before materialization
+                assign_event_roles(enc)
+
                 record = encounter_to_record(enc, now, context.run_id)
                 if record["encounter_id"] in existing_ids:
                     # Preserve original created_at for updates
@@ -229,6 +305,13 @@ class MaterializeStage(PipelineStage):
                     update_records.append(record)
                 else:
                     insert_records.append(record)
+
+                # Build detail rows for each event
+                enc_id = enc.encounter_id or ""
+                for event in enc.events:
+                    detail_records.append(
+                        event_to_detail_record(event, enc_id)
+                    )
 
             # Write inserts
             if insert_records:
@@ -241,6 +324,13 @@ class MaterializeStage(PipelineStage):
                     self._delete_by_id(adapter, rec["encounter_id"])
                 count = adapter.write_records(TABLE_NAME, update_records)
                 self.encounters_updated = count
+
+            # Write detail rows
+            if detail_records:
+                detail_count: int = adapter.write_records(
+                    DETAIL_TABLE_NAME, detail_records
+                )
+                self.detail_rows_written = detail_count
 
             self.encounters_materialized = (
                 self.encounters_inserted + self.encounters_updated
@@ -285,6 +375,21 @@ class MaterializeStage(PipelineStage):
             "created_at TEXT, "
             "updated_at TEXT, "
             "asre_version TEXT"
+            ")"
+        )
+        adapter.execute_ddl(ddl)
+
+    def _ensure_detail_table(self, adapter: Any) -> None:
+        """Create the asre_encounters_detail table if it doesn't exist."""
+        ddl = (
+            f"CREATE TABLE IF NOT EXISTS {DETAIL_TABLE_NAME} ("
+            "encounter_id TEXT NOT NULL, "
+            "event_id TEXT NOT NULL, "
+            "event_type TEXT NOT NULL, "
+            "event_ts TEXT, "
+            "source_system TEXT, "
+            "role_in_encounter TEXT, "
+            "PRIMARY KEY (encounter_id, event_id)"
             ")"
         )
         adapter.execute_ddl(ddl)

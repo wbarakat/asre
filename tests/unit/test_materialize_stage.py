@@ -291,11 +291,13 @@ class TestMaterializeStage:
         assert stage.encounters_inserted == 1
         assert stage.encounters_updated == 0
 
-        # write_records was called with the table name
-        adapter.write_records.assert_called_once()
-        call_args = adapter.write_records.call_args
-        assert call_args[0][0] == TABLE_NAME
-        records = call_args[0][1]
+        # write_records called for main table and detail table
+        main_calls = [
+            c for c in adapter.write_records.call_args_list
+            if c[0][0] == TABLE_NAME
+        ]
+        assert len(main_calls) == 1
+        records = main_calls[0][0][1]
         assert len(records) == 1
         assert records[0]["encounter_id"] == "enc-abc123"
         assert records[0]["created_at"] is not None
@@ -322,9 +324,13 @@ class TestMaterializeStage:
         assert stage.encounters_inserted == 0
         assert stage.encounters_updated == 1
 
-        # write_records called for updates
-        call_args = adapter.write_records.call_args
-        records = call_args[0][1]
+        # write_records called for updates (filter to main table)
+        main_calls = [
+            c for c in adapter.write_records.call_args_list
+            if c[0][0] == TABLE_NAME
+        ]
+        assert len(main_calls) == 1
+        records = main_calls[0][0][1]
         assert records[0]["created_at"] == original_created_at
 
     def test_no_adapter_skips_materialization(self) -> None:
@@ -390,11 +396,11 @@ class TestMaterializeStage:
         batch = EventBatch(batch_id="run_001", events=[])
         stage.run(batch, context)
 
-        # execute_ddl called with CREATE TABLE IF NOT EXISTS
-        adapter.execute_ddl.assert_called_once()
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE IF NOT EXISTS" in ddl
-        assert TABLE_NAME in ddl
+        # execute_ddl called for both main table and detail table
+        ddl_calls = [c[0][0] for c in adapter.execute_ddl.call_args_list]
+        main_ddls = [d for d in ddl_calls if TABLE_NAME in d and "detail" not in d]
+        assert len(main_ddls) == 1
+        assert "CREATE TABLE IF NOT EXISTS" in main_ddls[0]
 
     def test_metrics_tracked(self) -> None:
         """Stage metrics should be populated after run."""
