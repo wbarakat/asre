@@ -38,7 +38,7 @@
 - [x] US-017: Implement CLI skeleton (priority 17)
 
 ## Phase 3: Ingest Layer (US-018 to US-026)
-- [ ] US-018: Define IngestAdapter interface (priority 18)
+- [x] US-018: Define IngestAdapter interface (priority 18)
 - [ ] US-019: Implement PostgreSQL adapter (priority 19)
 - [ ] US-020: Implement full mode ingest (priority 20)
 - [ ] US-021: Implement incremental mode with lookback buffer (priority 21)
@@ -366,4 +366,17 @@
   - Test YAML must match actual Pydantic schema fields: `customer_id`/`customer_name` (not `id`/`name`), `connection` as dict (not `connection_string`)
   - 12 tests covering: help display (2), validate-config success (3), validate-config errors (4), test-connection (2), entry point (1)
   - Total test count: 196 (184 existing + 12 new)
+---
+
+## 2026-02-02 - US-018
+- Implemented: IngestAdapter ABC in `asre/ingest/base.py` with 7 abstract methods
+- Methods: connect(), disconnect(), read_source(source_name, query, params), get_watermark(source_name), set_watermark(source_name, watermark), execute_ddl(ddl), write_records(table_name, records)
+- Files changed: asre/ingest/base.py (new), tests/unit/test_ingest_adapter.py (new)
+- **Learnings for future iterations:**
+  - Same ABC pattern as PipelineStage in `asre/pipeline/runner.py` — `from abc import ABC, abstractmethod`
+  - `read_source` returns `list[dict[str, Any]]` for raw record dicts
+  - `get_watermark` returns `datetime | None` (None when no watermark exists, e.g., first run)
+  - `write_records` returns `int` count of records written
+  - 18 tests covering: abstract instantiation (2), required methods exist (7), incomplete subclass (1), complete subclass operations (8)
+  - Total test count: 214 (196 existing + 18 new)
 ---
