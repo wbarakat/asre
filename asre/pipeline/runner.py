@@ -223,14 +223,20 @@ class PipelineRunner:
             mode=self.mode,
         )
 
-        # Set up audit logger if adapter is available
+        # Set up audit logger and run metrics writer if adapter is available
         adapter = self._config.get("adapter")
+        metrics_writer = None
         if adapter is not None:
             from asre.pipeline.audit import AuditLogger
 
             audit_logger = AuditLogger(adapter=adapter, run_id=self.run_id)
             audit_logger.ensure_table()
             context.config["audit_logger"] = audit_logger
+
+            from asre.observability.run_metrics_writer import RunMetricsWriter
+
+            metrics_writer = RunMetricsWriter(adapter)
+            metrics_writer.ensure_table()
 
         self.stage_metrics = []
 
@@ -278,6 +284,10 @@ class PipelineRunner:
                     stage_name=stage_name,
                     stage_index=idx,
                 )
+
+        # Persist run metrics to asre_run_metrics table
+        if metrics_writer is not None and self.stage_metrics:
+            metrics_writer.write_metrics(self.stage_metrics)
 
         # Mark run as completed
         if checkpoint_mgr is not None:
