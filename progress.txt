@@ -17,6 +17,8 @@
 - IngestQueryBuilder in `asre/ingest/query_builder.py` builds SQL queries per mode (full/incremental) with optional exclude filters
 - `resolve_lookback_buffer_hours(lookback_config, source_type)` in query_builder.py parses "24h"/"3d" format strings and falls back to "default" key
 - IngestQueryBuilder accepts optional `watermark` (datetime|None) and `lookback_buffer_hours` (int) params for incremental mode
+- `dedup_by_source_record_id(records, key_field)` in `asre/ingest/dedup.py` returns `(deduped_records, dedup_count)` tuple
+- For mypy strict: use explicit `list[dict[str, Any]]` type annotation when list contains dicts with heterogeneous values (None, missing keys)
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -48,7 +50,7 @@
 - [x] US-019: Implement PostgreSQL adapter (priority 19)
 - [x] US-020: Implement full mode ingest (priority 20)
 - [x] US-021: Implement incremental mode with lookback buffer (priority 21)
-- [ ] US-022: Implement source_record_id dedup on ingest (priority 22)
+- [x] US-022: Implement source_record_id dedup on ingest (priority 22)
 - [ ] US-023: Implement exclude filters (priority 23)
 - [ ] US-024: Implement watermark management (priority 24)
 - [ ] US-025: Implement IngestStage (priority 25)
@@ -438,4 +440,19 @@
   - Full mode backward compatibility: new optional params default to None/24 so existing code doesn't break
   - 15 tests: 7 incremental query tests, 6 lookback buffer parsing tests, 2 full mode backward compatibility tests
   - Total test count: 254 (239 existing + 15 new)
+---
+
+## 2026-02-02 - US-022
+- Implemented: `dedup_by_source_record_id` function in `asre/ingest/dedup.py`
+- Deduplicates raw record dicts by a configurable key field, keeping first occurrence by source ordering
+- Returns tuple of `(deduped_records, dedup_count)` for metrics tracking
+- Records with missing or None key values are kept (not deduped) - handles edge cases gracefully
+- Files changed: asre/ingest/dedup.py (new), tests/unit/test_ingest_dedup.py (new)
+- **Learnings for future iterations:**
+  - Dedup function is a standalone utility, not coupled to any adapter - can be used by IngestStage (US-025)
+  - `dedup_count` in the return tuple maps directly to stage metrics tracking
+  - For mypy strict mode with heterogeneous dict lists (dicts with None values or missing keys), need explicit `list[dict[str, Any]]` type annotation on the variable
+  - `str()` conversion of key values ensures consistent hashing even for non-string source_record_ids
+  - 9 tests covering: no dupes, basic dedup, multiple dupes of same id, order preservation, empty input, single record, custom key field, missing key field, None key values
+  - Total test count: 263 (254 existing + 9 new)
 ---
