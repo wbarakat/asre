@@ -72,6 +72,7 @@
 - Tiebreaker map: lower index = higher priority in same_timestamp_tiebreaker list
 - EncounterStitcher accepts `patient_class_transitions` param (default: ed->IP merge, obs->IP merge, IP->IP new_encounter)
 - encounter_type priority: inpatient > observation > ed > outpatient (highest priority patient_class wins)
+- StitchedEncounter.obs_to_ip_conversion detected by OBS_TO_IP event_type in `_check_obs_to_ip()`
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -133,7 +134,7 @@
 - [x] US-043: Basic encounter stitching (priority 43)
 - [x] US-044: Facility matching requirement for stitching (priority 44)
 - [x] US-045: ED to IP merge (priority 45)
-- [ ] US-046: OBS to IP conversion (priority 46)
+- [x] US-046: OBS to IP conversion (priority 46)
 - [ ] US-047: IP to IP as new encounter (priority 47)
 - [ ] US-048: Transfer chain detection (priority 48)
 - [ ] US-049: Handle cancellation events (priority 49)
@@ -896,4 +897,19 @@
   - ED events with patient_class="ed" are simply kept in the encounter event list — no special "supporting" role marking needed at stitch time (that's for the detail table in later stages)
   - 8 tests covering: merge (1), encounter_type=inpatient (1), ED events kept (1), default transitions (1), different facility (1), outside window (1), ED-only type (1), multiple ED before admit (1)
   - Total test count: 700 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-046
+- Implemented: OBS to IP conversion detection in `asre/stitch/encounter_stitcher.py`
+- Added `obs_to_ip_conversion: bool` field to `StitchedEncounter` dataclass (default False)
+- Added `_check_obs_to_ip()` method that sets flag to True when OBS_TO_IP event_type is encountered
+- The merge behavior (OBS_START + OBS_TO_IP -> single encounter, type=inpatient) was already handled by existing time window + encounter_type priority logic from US-043/045
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_obs_to_ip_conversion.py (new)
+- **Learnings for future iterations:**
+  - OBS->IP merge was already working via the default patient_class_transitions config and encounter_type priority — only the obs_to_ip_conversion flag was missing
+  - OBS_TO_IP event_type is the signal for setting the flag — checking event_type == "OBS_TO_IP" in add_event() is sufficient
+  - The flag is on StitchedEncounter (intermediate), downstream stages will copy it to the final Encounter dataclass
+  - ED->IP merges correctly do NOT set obs_to_ip_conversion (different event_type)
+  - 7 tests covering: single encounter (1), conversion flag set (1), encounter_type=inpatient (1), default transitions config (1), OBS-only no flag (1), with additional events (1), ED->IP no flag (1)
+  - Total test count: 707 passed + 16 skipped (integration tests skip without Postgres)
 ---

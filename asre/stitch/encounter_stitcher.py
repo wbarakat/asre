@@ -5,6 +5,9 @@ sorted by event_ts, and grouped into encounters using time window + facility mat
 
 US-045: ED to IP merge. ED_ARRIVAL + ADMIT at same facility within time window
 merges into a single encounter with encounter_type = inpatient.
+
+US-046: OBS to IP conversion. OBS_START + OBS_TO_IP at same facility within time
+window merges into a single encounter with obs_to_ip_conversion = true.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ class StitchedEncounter:
     events: list[CanonicalEvent] = field(default_factory=list)
     last_event_ts: datetime | None = None
     encounter_type: str | None = None
+    obs_to_ip_conversion: bool = False
 
     def add_event(self, event: CanonicalEvent) -> None:
         """Add an event to this encounter and update last_event_ts and encounter_type."""
@@ -36,6 +40,12 @@ class StitchedEncounter:
         if self.last_event_ts is None or event.event_ts > self.last_event_ts:
             self.last_event_ts = event.event_ts
         self._update_encounter_type(event)
+        self._check_obs_to_ip(event)
+
+    def _check_obs_to_ip(self, event: CanonicalEvent) -> None:
+        """Detect OBS_TO_IP event and set conversion flag."""
+        if event.event_type == "OBS_TO_IP":
+            self.obs_to_ip_conversion = True
 
     def _update_encounter_type(self, event: CanonicalEvent) -> None:
         """Derive encounter_type from the highest-priority patient_class seen.
