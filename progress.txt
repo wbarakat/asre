@@ -34,8 +34,8 @@
 - [x] US-013: Define source config Pydantic schema (priority 13)
 - [x] US-014: Define facility alias config schema (priority 14)
 - [x] US-015: Implement YAML config loader with env var substitution (priority 15)
-- [ ] US-016: Create example customer config (priority 16)
-- [ ] US-017: Implement CLI skeleton (priority 17)
+- [x] US-016: Create example customer config (priority 16)
+- [x] US-017: Implement CLI skeleton (priority 17)
 
 ## Phase 3: Ingest Layer (US-018 to US-026)
 - [ ] US-018: Define IngestAdapter interface (priority 18)
@@ -155,9 +155,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 15
+- Completed: 16
 - In progress: 0
-- Not started: 93
+- Not started: 92
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -333,4 +333,37 @@
   - mypy strict mode requires explicit type annotations on return values from `Any`-returning functions
   - 19 tests covering: valid load (4), source loading (3), facility alias loading (3), env var substitution (4), error handling (5)
   - Total test count: 159 (140 existing + 19 new)
+---
+
+## 2026-02-02 - US-016
+- Implemented: Complete example customer config for test_customer with all required files
+- Files changed: customer_config/test_customer/config.yaml (new), customer_config/test_customer/sources/adt_vendor_x.yaml (new), customer_config/test_customer/sources/claims_clearinghouse.yaml (new), customer_config/test_customer/sources/auth_portal.yaml (new), customer_config/test_customer/facility_aliases.yaml (new), tests/unit/test_example_config.py (new)
+- **Learnings for future iterations:**
+  - config.yaml must have all sections from GlobalConfig populated for a complete example
+  - ADT source needs: event_type_rules with HL7 mappings (A01, A03, etc.), conditional_mappings for patient class (ED, OBS), admit/discharge flag expressions, filters.exclude
+  - Claims source needs: paired_events (admit/discharge), patient_class_rules with bill type conditions, diagnosis field mappings
+  - Auth source needs: auth_status_map with source_field + mappings (A->approved, D->denied, etc.)
+  - facility_aliases.yaml should include multiple facility types (acute, snf, rehab) for downstream testing of stale encounter thresholds
+  - Tests use monkeypatch to set env vars that ${ENV_VAR} patterns reference in YAML
+  - 25 tests covering: directory structure (7), config loading (4), source validation (8), facility aliases (6)
+  - Total test count: 184 (159 existing + 25 new)
+---
+
+## 2026-02-02 - US-017
+- Implemented: CLI skeleton with Click framework in `asre/cli/main.py`
+- `validate-config` command loads and validates customer config, prints success or errors
+- `test-connection` command as placeholder printing "Not yet implemented."
+- CLI group shows help with no args via `invoke_without_command=True`
+- Options `--config-path` / `--customer-id` read from env vars `ASRE_CONFIG_PATH` / `ASRE_CUSTOMER_ID` with Click's `envvar` parameter
+- Entry point already registered in pyproject.toml from US-001
+- Files changed: asre/cli/main.py (modified), tests/unit/test_cli.py (new)
+- **Learnings for future iterations:**
+  - Click's `envvar` parameter on `@click.option` reads from env var as fallback when flag not provided
+  - Click flags take precedence over env vars automatically
+  - `@click.group(invoke_without_command=True)` + `@click.pass_context` + checking `ctx.invoked_subcommand is None` to show help with no args
+  - `CliRunner` from `click.testing` supports `env={}` to set environment variables for testing
+  - Error output via `click.echo(msg, err=True)` + `sys.exit(1)` for non-zero exit codes
+  - Test YAML must match actual Pydantic schema fields: `customer_id`/`customer_name` (not `id`/`name`), `connection` as dict (not `connection_string`)
+  - 12 tests covering: help display (2), validate-config success (3), validate-config errors (4), test-connection (2), entry point (1)
+  - Total test count: 196 (184 existing + 12 new)
 ---
