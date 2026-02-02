@@ -9,6 +9,7 @@
 - CanonicalEvent.role_in_encounter: str | None — values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
 - Deduplicator._source_type() extracts prefix (adt/claims/auth) from source_system name for priority lookup; unknown sources default to priority 0
 - Deduplicator match key uses getattr on CanonicalEvent; default match_fields: patient_key, event_type, facility_canonical_id
+- DedupStage in `asre/dedup/stage.py`: encounters_in set externally, results on stage.encounters; runs event-level then encounter-level dedup; source priority from reconciliation.timestamp_priority config
 - All `__init__.py` files are empty placeholders
 - CLI entry point: `asre.cli.main:cli` using Click
 - mypy configured in strict mode in pyproject.toml
@@ -172,11 +173,11 @@
 - [x] US-052: Implement StitchStage (priority 52)
 
 ## Phase 7: Deduplication (US-053 to US-057)
-- [ ] US-053: Identify duplicate events within encounter (priority 53)
-- [ ] US-054: Resolve duplicates by source priority (priority 54)
-- [ ] US-055: Mark duplicates for audit (priority 55)
-- [ ] US-056: Encounter-level dedup (priority 56)
-- [ ] US-057: Implement DedupStage (priority 57)
+- [x] US-053: Identify duplicate events within encounter (priority 53)
+- [x] US-054: Resolve duplicates by source priority (priority 54)
+- [x] US-055: Mark duplicates for audit (priority 55)
+- [x] US-056: Encounter-level dedup (priority 56)
+- [x] US-057: Implement DedupStage (priority 57)
 
 ## Phase 8: Cross-Source Reconciliation (US-058 to US-063)
 - [ ] US-058: Timestamp selection by source priority (priority 58)
@@ -1103,4 +1104,18 @@
   - TYPE_CHECKING import pattern works for avoiding circular imports between dedup and stitch modules
   - Overlap detection for open encounters: if has_discharge=False, treat as extending to infinity (overlaps with any later encounter at same patient+facility)
   - Pre-existing mypy errors (12 in 6 files) are not related to dedup changes — my files pass clean
+---
+
+## 2026-02-02 - US-057
+- What was implemented: DedupStage pipeline stage that orchestrates event-level and encounter-level dedup
+- Files changed:
+  - `asre/dedup/stage.py` — new DedupStage class implementing PipelineStage; runs event-level dedup (find_duplicates -> resolve_duplicates -> mark_roles) then encounter-level dedup (merge_overlapping_encounters)
+  - `tests/unit/test_dedup_stage.py` — 16 tests covering: interface (subclass, run method, return type), processing (empty, no-dupes passthrough, event-level dedup, encounter-level merge), metrics (events_before, events_after, duplicates_found, encounters_merged, stage_name, status), config (source priority, default config), end-to-end mixed scenario
+  - `prd.json` — marked US-057 as passes: true
+- **Learnings for future iterations:**
+  - DedupStage follows same pattern as StitchStage: encounters_in set externally, results stored on stage.encounters
+  - Source priority for dedup comes from `reconciliation.timestamp_priority` config section, defaults to adt=100, claims=80, auth=40
+  - Dedup config (match_fields, time_tolerance_minutes) comes from `deduplication` config section
+  - Event-level dedup runs per-encounter; encounter-level dedup runs across all encounters
+  - events_after counts non-duplicate events (role_in_encounter != "duplicate") since duplicates are kept for audit
 ---
