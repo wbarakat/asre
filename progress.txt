@@ -20,7 +20,7 @@
 - [x] US-005: Define DiagnosisCode model (priority 5)
 - [x] US-006: Define EventBatch dataclass (priority 6)
 - [x] US-007: Implement structured JSON logging (priority 7)
-- [ ] US-008: Implement per-stage metrics tracking (priority 8)
+- [x] US-008: Implement per-stage metrics tracking (priority 8)
 - [ ] US-009: Define PipelineStage interface (priority 9)
 - [ ] US-010: Scaffold dbt project for PostgreSQL (priority 10)
 - [ ] US-011: Set up test infrastructure (priority 11)
@@ -227,4 +227,18 @@
   - Logger names must be unique per stage+run_id to avoid handler duplication
   - `logger.propagate = False` prevents double-logging via root logger
   - Tests redirect handler stream to `io.StringIO` for output capture
+---
+
+## 2026-02-01 - US-008
+- Implemented: StageMetrics class in `asre/observability/metrics.py` with context manager interface
+- Tracks: stage_name, run_id, started_at, completed_at, records_in, records_out, errors, status
+- Context manager auto-captures timing (started_at on enter, completed_at on exit)
+- Status transitions: pending -> running -> success/failed
+- `to_dict()` method serializes all fields for persistence to asre_run_metrics table
+- Files changed: asre/observability/metrics.py, tests/unit/test_metrics.py
+- **Learnings for future iterations:**
+  - Context manager `__exit__` receives exc_type/exc_val/exc_tb — check exc_type to detect failures
+  - `datetime.now(timezone.utc)` for UTC timestamps (not `datetime.utcnow()` which is naive)
+  - StageMetrics is a plain class (not dataclass) because it needs `__enter__`/`__exit__` methods and mutable state
+  - 7 tests covering: construction, timing capture, failure recording, field tracking, to_dict serialization, UTC validation
 ---
