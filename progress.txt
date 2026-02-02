@@ -123,6 +123,10 @@
 - Reconciler.flag_timestamp_mismatches(encounter, timestamp_tolerance_hours=24) returns list[str] of flags; compares ADT vs claims admit/discharge timestamps
 - _earliest_ts(events, event_types) static method on Reconciler — returns earliest timestamp among events matching given types, or None
 - TIMESTAMP_MISMATCH flag: only generated when BOTH ADT and claims sources present AND admit or discharge timestamps differ by > tolerance hours
+- ReconcileStage in `asre/reconcile/stage.py`: encounters_in set externally, results on stage.encounters (list[ReconciledEncounter])
+- ReconciledEncounter wraps StitchedEncounter + reconciled_timestamps, reconciled_classification, confidence_flags; uses __getattr__ delegation
+- ReconcileStage tracks: encounters_reconciled (int), flags_generated (dict[str, int]), auth_without_admit_count (int)
+- ReconcileStage reads config from context.config["reconciliation"] for timestamp_priority, classification_priority, timestamp_tolerance_hours
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -205,7 +209,7 @@
 - [ ] US-060: Auth reconciliation rules (priority 60)
 - [ ] US-061: Flag timestamp mismatches (priority 61)
 - [ ] US-062: Flag missing event patterns (priority 62)
-- [ ] US-063: Implement ReconcileStage (priority 63)
+- [x] US-063: Implement ReconcileStage (priority 63)
 
 ## Phase 9: Confidence Scoring (US-064 to US-068)
 - [ ] US-064: Base confidence score computation (priority 64)
@@ -1210,4 +1214,21 @@
   - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES constants defined at module level in reconciler.py
   - Time-based flags (MISSING_DISCHARGE, ADT_ONLY_ENCOUNTER) accept `now` parameter for testability instead of using datetime.now() directly
   - Claims lag concept: ADT-only encounters should only be flagged after sufficient time has passed for claims to arrive (default 45 days)
+---
+
+## 2026-02-02 - US-063
+- Implemented: ReconcileStage in `asre/reconcile/stage.py` implementing PipelineStage
+- ReconciledEncounter wrapper class holds reconciliation results (timestamps, classification, flags) alongside the original StitchedEncounter
+- Stage orchestrates all reconciler methods: reconcile_timestamps, reconcile_classification, reconcile_auth, flag_timestamp_mismatches, flag_missing_discharge, flag_orphan_discharge, flag_claims_only, flag_adt_only
+- Tracks metrics: encounters_reconciled, flags_generated (dict[str, int] by flag type), auth_without_admit_count
+- Supports config overrides for timestamp_priority, classification_priority, timestamp_tolerance_hours
+- Files changed:
+  - `asre/reconcile/stage.py` — New file: ReconcileStage + ReconciledEncounter
+  - `tests/unit/test_reconcile_stage.py` — 8 tests across 3 test classes
+- **Learnings for future iterations:**
+  - ReconcileStage follows same pattern as DedupStage: encounters_in set externally, results on stage.encounters
+  - ReconciledEncounter uses __getattr__ delegation to underlying StitchedEncounter for transparent attribute access
+  - Stage collects flags from all reconciler methods into a single confidence_flags list per encounter
+  - flags_generated dict on stage tracks aggregate flag counts across all encounters for metrics reporting
+  - Config path: `context.config["reconciliation"]["timestamp_tolerance_hours"]` (default 24)
 ---
