@@ -12,6 +12,9 @@ window merges into a single encounter with obs_to_ip_conversion = true.
 US-047: IP to IP as new encounter. DISCHARGE + new ADMIT (both IP) at same facility
 within time window produces two separate encounters based on patient_class_transitions
 with action=new_encounter.
+
+US-049: Cancellation events. CANCEL_ADMIT marks encounter status=cancelled.
+CANCEL_DISCHARGE clears has_discharge and sets status=open (encounter reopened).
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ class StitchedEncounter:
     encounter_type: str | None = None
     obs_to_ip_conversion: bool = False
     has_discharge: bool = False
+    status: str = "open"
     transfer_chain: list[int] = field(default_factory=list)
 
     # Event types that indicate a discharge has occurred
@@ -53,14 +57,25 @@ class StitchedEncounter:
     )
 
     def add_event(self, event: CanonicalEvent) -> None:
-        """Add an event to this encounter and update last_event_ts and encounter_type."""
+        """Add an event to this encounter and update last_event_ts, encounter_type, status."""
         self.events.append(event)
         if self.last_event_ts is None or event.event_ts > self.last_event_ts:
             self.last_event_ts = event.event_ts
         self._update_encounter_type(event)
         self._check_obs_to_ip(event)
+        self._handle_cancellation(event)
         if event.event_type in self._DISCHARGE_EVENT_TYPES:
             self.has_discharge = True
+            if self.status != "cancelled":
+                self.status = "closed"
+
+    def _handle_cancellation(self, event: CanonicalEvent) -> None:
+        """Handle CANCEL_ADMIT and CANCEL_DISCHARGE events."""
+        if event.event_type == "CANCEL_ADMIT":
+            self.status = "cancelled"
+        elif event.event_type == "CANCEL_DISCHARGE":
+            self.has_discharge = False
+            self.status = "open"
 
     def _check_obs_to_ip(self, event: CanonicalEvent) -> None:
         """Detect OBS_TO_IP event and set conversion flag."""

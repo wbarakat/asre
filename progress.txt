@@ -80,6 +80,10 @@
 - Transfer chain requires: (1) enc_a has discharge, (2) enc_b at different facility, (3) enc_b admit within time_window_hours of enc_a discharge
 - `transfer_chain: list[int]` on StitchedEncounter stores indices into the encounters list; empty list = no transfer
 - Multi-hop chains built from consecutive pairwise links; partial chains (A->B linked, B->C not) handled correctly
+- StitchedEncounter.status field: "open" (default/no discharge), "closed" (has discharge), "cancelled" (CANCEL_ADMIT)
+- CANCEL_ADMIT sets status="cancelled"; CANCEL_DISCHARGE clears has_discharge and sets status="open"
+- Cancellation events stitch normally (not admit-type, so _should_force_new_encounter doesn't trigger)
+- _handle_cancellation() called BEFORE discharge tracking in add_event() — order matters for CANCEL_DISCHARGE
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -142,9 +146,9 @@
 - [x] US-044: Facility matching requirement for stitching (priority 44)
 - [x] US-045: ED to IP merge (priority 45)
 - [x] US-046: OBS to IP conversion (priority 46)
-- [ ] US-047: IP to IP as new encounter (priority 47)
+- [x] US-047: IP to IP as new encounter (priority 47)
 - [x] US-048: Transfer chain detection (priority 48)
-- [ ] US-049: Handle cancellation events (priority 49)
+- [x] US-049: Handle cancellation events (priority 49)
 - [ ] US-050: Deterministic encounter IDs (priority 50)
 - [ ] US-051: Set encounter metadata (priority 51)
 - [ ] US-052: Implement StitchStage (priority 52)
@@ -956,4 +960,21 @@
   - Same facility encounters are never transfers (even with discharge) — they're IP→IP new encounters handled separately
   - 10 tests covering: basic A→B transfer (2), no transfer outside window (1), no transfer same facility (1), A→B→C chain (3), partial chain (1), different patients (1), no discharge (1)
   - Total test count: 726 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-049
+- Implemented: Cancellation event handling in `asre/stitch/encounter_stitcher.py`
+- Added `status` field to `StitchedEncounter` dataclass: "open" (default), "closed" (has discharge), "cancelled" (CANCEL_ADMIT)
+- CANCEL_ADMIT: sets status="cancelled" on the encounter
+- CANCEL_DISCHARGE: clears has_discharge and resets status="open" (encounter reopened)
+- Cancel events attach to the most recent matching encounter for patient at facility via normal stitching rules (they're not admit-type events, so _should_force_new_encounter doesn't trigger)
+- Status derivation: discharge events set status="closed" (unless already cancelled); CANCEL_ADMIT overrides to "cancelled"; CANCEL_DISCHARGE resets to "open"
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_cancellation_events.py (new)
+- **Learnings for future iterations:**
+  - Cancellation events are NOT admit-type, so they bypass the IP→IP new_encounter logic and stitch normally
+  - `_handle_cancellation()` must be called BEFORE discharge tracking in `add_event()` — otherwise CANCEL_DISCHARGE would see has_discharge already reset
+  - Status field on StitchedEncounter is a simple string, not an enum — downstream stages (US-051) will map to final Encounter.status
+  - Test timestamps must be within 48h time window (default) to ensure events stitch into same encounter
+  - 10 tests covering: CANCEL_ADMIT (3 — status, events kept, attaches to recent), CANCEL_DISCHARGE (4 — reopens, clears has_discharge, events kept, attaches correctly), facility matching (1), default status (2 — open, closed)
+  - Total test count: 736 passed + 16 skipped (integration tests skip without Postgres)
 ---
