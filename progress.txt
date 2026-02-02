@@ -135,6 +135,12 @@
 - ReconciledEncounter wraps StitchedEncounter + reconciled_timestamps, reconciled_classification, confidence_flags; uses __getattr__ delegation
 - ReconcileStage tracks: encounters_reconciled (int), flags_generated (dict[str, int]), auth_without_admit_count (int)
 - ReconcileStage reads config from context.config["reconciliation"] for timestamp_priority, classification_priority, timestamp_tolerance_hours
+- ScoreStage in `asre/score/stage.py`: encounters_in set externally, results on stage.encounters; tracks encounters_scored, avg_score, score_distribution (high/medium/low/very_low)
+- ScoreStage reads config from context.config["confidence_scoring"] for signal_weights, penalty_weights, stale_thresholds
+- ScoreStage reads context.config["facility_registry_map"] (dict[str, str]: canonical_id -> facility_type) for stale detection — pipeline runner must populate this from FacilityRegistry
+- ScoreStage._classify_score: high (>=0.85), medium (>=0.60), low (>=0.30), very_low (<0.30)
+- ScoreStage sets confidence_score directly on ReconciledEncounter via type-ignored attr assignment
+- StageMetrics status is "success" not "completed" after normal context manager exit
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -224,7 +230,7 @@
 - [ ] US-065: Penalty application to confidence score (priority 65)
 - [ ] US-066: Populate confidence_flags array (priority 66)
 - [ ] US-067: Stale encounter detection (priority 67)
-- [ ] US-068: Implement ScoreStage (priority 68)
+- [x] US-068: Implement ScoreStage (priority 68)
 
 ## Phase 10: Materialization & Pipeline Orchestration (US-069 to US-080)
 - [ ] US-069: Implement pipeline orchestrator (priority 69)
@@ -1303,4 +1309,21 @@
   - Custom stale_thresholds can be passed to ConfidenceScorer for per-customer configuration
   - 6 tests covering: acute open 31d (stale), SNF open 100d (not stale), unknown type 31d (stale with default), closed encounter (never stale), acute open 29d (not stale), custom thresholds
   - Total test count: 908 passed (unit tests)
+---
+
+## 2026-02-02 - US-068
+- Implemented ScoreStage as pipeline stage for confidence scoring
+- ScoreStage processes ReconciledEncounters: detects stale encounters (with facility_type lookup), computes confidence scores, builds confidence_flags, classifies into score distribution bands
+- Tracks metrics: encounters_scored, avg_score, score_distribution (high/medium/low/very_low)
+- Files changed:
+  - `asre/score/stage.py` — new ScoreStage implementing PipelineStage
+  - `tests/unit/test_score_stage.py` — 11 tests covering scoring, flags, metrics, stale detection, config weights, empty list, mixed-quality batch
+  - `prd.json` — marked US-068 passes: true
+  - `progress.txt` — updated codebase patterns and progress
+- **Learnings for future iterations:**
+  - StageMetrics status after successful context manager exit is "success" (not "completed") — test accordingly
+  - Open encounters with ADMIT timestamps far in the past will trigger STALE_OPEN_ENCOUNTER in ScoreStage — tests using old default timestamps (e.g., 2024-01-01) with open encounters will get stale penalty applied
+  - ScoreStage uses `facility_registry_map` from config (dict[str, str]) to look up facility_type — the pipeline runner (US-069) must populate this from FacilityRegistry before invoking ScoreStage
+  - confidence_score is set directly on ReconciledEncounter via dynamic attribute assignment (type: ignore needed for mypy)
+  - Total test count: 919 passed (unit tests)
 ---
