@@ -66,6 +66,10 @@
 - For mypy strict: use `count: int = adapter.write_records(...)` to avoid `Returning Any` when adapter typed as `Any`
 - Click CLI: `facilities` is a group with `invoke_without_command=True`; group-level options (--config-path, --customer-id) passed to subcommands via `ctx.obj` dict
 - `_get_facility_adapter(config_path, customer_id)` in cli/main.py creates connected PostgresAdapter from config — mock this in tests
+- EncounterStitcher returns `list[StitchedEncounter]` — intermediate dataclass with events, patient_key, facility_canonical_id, last_event_ts
+- StitchedEncounter.add_event() updates last_event_ts for sliding window computation
+- Source type extraction from source_system name: prefix-based (adt_*, claims_*, auth_*)
+- Tiebreaker map: lower index = higher priority in same_timestamp_tiebreaker list
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -124,7 +128,7 @@
 - [x] US-042: Add facility CLI commands (priority 42)
 
 ## Phase 6: Encounter Stitching (US-043 to US-052)
-- [ ] US-043: Basic encounter stitching (priority 43)
+- [x] US-043: Basic encounter stitching (priority 43)
 - [ ] US-044: Facility matching requirement for stitching (priority 44)
 - [ ] US-045: ED to IP merge (priority 45)
 - [ ] US-046: OBS to IP conversion (priority 46)
@@ -842,4 +846,23 @@
   - Mock `_get_facility_adapter` to avoid real DB connections in unit tests
   - 11 tests covering: help output (2), unresolved listing (4), resolve mapping (3), resolve errors (2)
   - Total test count: 662 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-043
+- Implemented: EncounterStitcher class in `asre/stitch/encounter_stitcher.py` with StitchedEncounter intermediate dataclass
+- Partitions events by patient_key, sorts by event_ts ascending with source type tiebreaker
+- Default tiebreaker: claims > adt > auth (lower index = higher priority)
+- Events within time_window_hours (default 48) of current encounter's last event AND same facility stitch into same encounter
+- Events outside time window OR different facility close current encounter and start new
+- StitchedEncounter tracks: patient_key, facility_canonical_id, events list, last_event_ts (sliding window)
+- Source type extraction from source_system name is prefix-based (adt_*, claims_*, auth_*)
+- Files changed: asre/stitch/encounter_stitcher.py (new), tests/unit/test_encounter_stitcher.py (new)
+- **Learnings for future iterations:**
+  - EncounterStitcher produces StitchedEncounter (intermediate), not the final Encounter dataclass — downstream stages enrich it
+  - StitchedEncounter.add_event() updates last_event_ts for sliding window — time_window is relative to LAST event, not first
+  - Null facility_canonical_id treated as non-matching when facility_must_match=True (events with unresolved facilities don't auto-stitch)
+  - Tiebreaker uses index position in same_timestamp_tiebreaker list (0 = highest priority)
+  - Source type extraction is simple prefix matching — source_system names like "adt_vendor_x" -> "adt"
+  - 20 tests covering: construction (3), patient partitioning (3), time sorting (1), tiebreaker (1), time window stitching (7), encounter output (5)
+  - Total test count: 682 passed + 16 skipped (integration tests skip without Postgres)
 ---
