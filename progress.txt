@@ -37,6 +37,8 @@
 - PairedEventEmitter reuses `_parse_event_ts` and `_get_optional` patterns from FieldMapper (static methods, same logic)
 - PatientClassResolver in `asre/canonicalize/patient_class_resolver.py` evaluates SQL-like conditions (LIKE, =, IN) safely via regex (no eval)
 - `_evaluate_condition` supports: `field LIKE 'pattern%'`, `field = 'value'`, `field IN ('v1', 'v2')` — same safe parsing pattern as EventTypeResolver
+- DiagnosisCodeMapper in `asre/canonicalize/diagnosis_mapper.py` handles JSON arrays (strings or objects), native Python lists, and delimited strings (comma, semicolon, pipe)
+- DiagnosisCodeMapper.to_serializable() converts `list[DiagnosisCode]` to `list[dict] | None` for CanonicalEvent.diagnosis_codes field
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -79,7 +81,7 @@
 - [x] US-028: Implement event type resolver for ADT (priority 28)
 - [x] US-029: Implement paired event emission for claims (priority 29)
 - [x] US-030: Implement patient class resolution for claims (priority 30)
-- [ ] US-031: Implement diagnosis code mapping (priority 31)
+- [x] US-031: Implement diagnosis code mapping (priority 31)
 - [ ] US-032: Implement auth status mapping (priority 32)
 - [ ] US-033: Implement error tolerance for unparseable records (priority 33)
 - [ ] US-034: Implement CanonicalizeStage (priority 34)
@@ -605,4 +607,22 @@
   - PatientClassResolver is standalone — will be composed into CanonicalizeStage (US-034) alongside FieldMapper and EventTypeResolver
   - 13 tests covering: construction (1), bill type mappings (5), no-match (1), first-match-wins (1), missing/None fields (2), equality (1), IN (1), empty rules (1)
   - Total test count: 398 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-031
+- Implemented: DiagnosisCodeMapper class in `asre/canonicalize/diagnosis_mapper.py`
+- Maps principal_diagnosis and admitting_diagnosis as simple string field lookups
+- Maps diagnosis_codes handling three formats: JSON array of strings, JSON array of objects (full DiagnosisCode dicts), and delimited strings (comma, semicolon, pipe)
+- Native Python lists (pre-parsed by adapter) also supported
+- `to_serializable()` static method converts `list[DiagnosisCode]` to `list[dict] | None` for CanonicalEvent.diagnosis_codes
+- Files changed: asre/canonicalize/diagnosis_mapper.py (new), tests/unit/test_diagnosis_code_mapper.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - diagnosis_codes source field can arrive as JSON string, native list, or delimited string — must handle all three
+  - JSON array detection: check if string starts with `[` before trying `json.loads()`
+  - Delimited string parsing uses `re.split(r"[,;|]", raw_str)` to handle comma, semicolon, and pipe delimiters
+  - When parsing simple code strings (not full objects), default type to "ICD-10-CM" and assign sequential sequence numbers
+  - `to_serializable()` returns None (not empty list) for empty codes — matches CanonicalEvent.diagnosis_codes Optional semantics
+  - DiagnosisCodeMapper reuses same `_get_optional` pattern as FieldMapper and PairedEventEmitter
+  - 26 tests covering: principal_diagnosis (4), admitting_diagnosis (3), JSON array strings (3), JSON array objects (1), native list (1), delimited strings (6), edge cases (6), serialization (2)
+  - Total test count: 424 passed + 16 skipped (integration tests skip without Postgres)
 ---
