@@ -28,6 +28,8 @@
 - Migration scripts expose `description: str` and `upgrade(adapter: IngestAdapter) -> None` at module level
 - Use `CREATE TABLE IF NOT EXISTS` in migrations for idempotency
 - Migrator stores schema_version in asre_metadata table (same table used for watermarks)
+- FieldMapper maps raw records to CanonicalEvent; event_type set to "UNKNOWN" (resolved separately by EventTypeResolver)
+- CanonicalEvent.facility_raw is required (str, not Optional) — use empty string when mapping not configured
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -66,7 +68,7 @@
 - [x] US-026: Implement basic migration infrastructure (priority 26)
 
 ## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
-- [ ] US-027: Implement field mapper (priority 27)
+- [x] US-027: Implement field mapper (priority 27)
 - [ ] US-028: Implement event type resolver for ADT (priority 28)
 - [ ] US-029: Implement paired event emission for claims (priority 29)
 - [ ] US-030: Implement patient class resolution for claims (priority 30)
@@ -526,4 +528,24 @@
   - set_schema_version uses same ON CONFLICT upsert pattern as watermarks
   - 19 unit tests + 5 integration tests covering: Migrator construction (2), schema version check (3), migration discovery (3), execution (4), version setting (1), initial schema migration (6), integration (5)
   - Total test count: 303 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-027
+- Implemented: FieldMapper class in `asre/canonicalize/mapper.py` that maps raw record dicts to CanonicalEvent using config-defined FieldMappings
+- Takes raw record dict + FieldMappings config, maps source columns to canonical fields
+- Generates UUID event_id per record, sets ingested_at to current UTC timestamp, sets batch_id and source_system from context
+- event_type set to "UNKNOWN" placeholder (EventTypeResolver handles resolution in US-028)
+- Handles optional fields: returns None when mapping not configured or source column missing
+- facility_raw defaults to empty string when not mapped (required field on CanonicalEvent)
+- Parses event_ts from ISO string or passes through datetime objects
+- Preserves _raw_payload from ingest stage annotations
+- Files changed: asre/canonicalize/mapper.py (new), tests/unit/test_field_mapper.py (new)
+- **Learnings for future iterations:**
+  - FieldMapper is source-type-agnostic — it maps columns per FieldMappings config regardless of ADT/claims/auth
+  - event_type resolution is separate from field mapping (US-028 EventTypeResolver handles conditional logic)
+  - CanonicalEvent.facility_raw is required (str, not Optional) — use empty string when mapping not configured
+  - `_parse_event_ts` handles both str and datetime inputs since adapters may return either
+  - `_get_optional` pattern: check mapping field is not None, then check record value is not None, then str() convert
+  - 17 tests covering: construction (2), required field mapping (1), event_ts parsing (2), UUID generation (2), ingested_at (1), optional fields (2), raw_payload (1), event_type default (1), facility_raw edge case (1), configured optional fields (3), missing source column (1)
+  - Total test count: 320 passed + 16 skipped (integration tests skip without Postgres)
 ---
