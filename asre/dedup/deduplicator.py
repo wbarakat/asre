@@ -107,3 +107,46 @@ class Deduplicator:
                     result.append(cluster)
 
         return result
+
+    @staticmethod
+    def _source_type(source_system: str) -> str:
+        """Extract source type prefix from source_system name."""
+        for prefix in ("adt", "claims", "auth"):
+            if source_system.startswith(prefix):
+                return prefix
+        return source_system
+
+    def resolve_duplicates(
+        self,
+        duplicate_groups: list[list[CanonicalEvent]],
+        source_priority: dict[str, int],
+    ) -> tuple[list[CanonicalEvent], list[CanonicalEvent]]:
+        """Resolve each duplicate group by keeping the highest-priority event.
+
+        Within each group, the event from the source with the highest
+        timestamp_priority is kept. If multiple events share the same
+        source priority, the one with the earliest ingested_at wins.
+
+        Args:
+            duplicate_groups: Groups of duplicate events from find_duplicates().
+            source_priority: Map of source type to priority (higher = more trusted).
+
+        Returns:
+            Tuple of (kept_events, duplicate_events).
+        """
+        kept: list[CanonicalEvent] = []
+        duplicates: list[CanonicalEvent] = []
+
+        for group in duplicate_groups:
+            # Sort by: highest source priority desc, then earliest ingested_at asc
+            sorted_group = sorted(
+                group,
+                key=lambda e: (
+                    -source_priority.get(self._source_type(e.source_system), 0),
+                    e.ingested_at,
+                ),
+            )
+            kept.append(sorted_group[0])
+            duplicates.extend(sorted_group[1:])
+
+        return kept, duplicates
