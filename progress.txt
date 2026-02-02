@@ -1,4 +1,8 @@
 ## Codebase Patterns
+- RunMetricsWriter in `asre/observability/run_metrics_writer.py`: writes per-stage metrics to asre_run_metrics table; created by PipelineRunner in run() when adapter is available; ensure_table() creates DDL, write_metrics() batch-writes after all stages complete; metrics collected via stage.metrics.to_dict() already in self.stage_metrics list
+- AuditLogger in `asre/pipeline/audit.py`: writes to asre_audit_log table; created by PipelineRunner and passed via context.config["audit_logger"]; log() for single entries, log_batch() for multiple; ensure_table() creates DDL
+- PipelineRunner sets up audit_logger in run() before stage loop when adapter is available; stages access via context.config.get("audit_logger")
+- MaterializeStage logs audit entries after writing inserts/updates; uses audit_logger.log_batch() with action="materialize"
 - ReadmissionDetector in `asre/readmission/detector.py`: detects readmissions by grouping encounters by patient_key, sorting by admit_ts, checking if current acute admit is within 30 days of prior acute discharge; sets is_readmission and readmission_days on ReconciledEncounter via setattr
 - ReadmissionDetector is invoked in MaterializeStage.run() before encounter_to_record(); uses facility_registry_map from context.config to determine acute status
 - encounter_to_record uses getattr(enc, "is_readmission", None) to read dynamically-set readmission attributes from ReconciledEncounter
@@ -1445,4 +1449,35 @@
   - Only facility_type="acute" counts for readmission detection; facility_type_map maps facility_canonical_id -> facility type string
   - The replace_all parameter in Edit tool replaces ALL occurrences including in the middle of lines — avoid using it when the replacement string could match partial lines
   - Total test count: 999 passed (unit tests)
+---
+
+## 2026-02-02 - US-075
+- What was implemented: AuditLogger class that tracks encounter modifications in asre_audit_log table. Integrated into PipelineRunner (creates audit_logger and passes via context.config) and MaterializeStage (logs create/update events for each encounter).
+- Files changed:
+  - `asre/pipeline/audit.py` (new) — AuditLogger class with log(), log_batch(), ensure_table() methods
+  - `asre/pipeline/runner.py` — Added audit_logger setup in PipelineRunner.run()
+  - `asre/materialize/stage.py` — Added audit logging after encounter inserts/updates
+  - `tests/unit/test_audit_logger.py` (new) — 20 tests covering all acceptance criteria
+  - `prd.json` — marked US-075 as passes: true
+- **Learnings for future iterations:**
+  - AuditLogger follows same pattern as CheckpointManager: takes adapter + run_id, writes to a dedicated table
+  - context.config is the canonical way to pass cross-cutting concerns (audit_logger, facility_registry_map) between stages
+  - MaterializeStage audit logging runs AFTER writes to ensure only successful materializations are logged
+  - Pre-existing mypy errors in test files (26 errors across 8 files) are not from this change
+  - Total test count: 1019 passed (unit tests)
+---
+
+## 2026-02-02 - US-076
+- Implemented RunMetricsWriter class in `asre/observability/run_metrics_writer.py` to persist per-stage metrics to asre_run_metrics table
+- Integrated RunMetricsWriter into PipelineRunner.run() — creates table and writes all 9 stage metrics after pipeline completes
+- Files changed:
+  - `asre/observability/run_metrics_writer.py` — new RunMetricsWriter class (ensure_table + write_metrics)
+  - `asre/pipeline/runner.py` — initialize metrics_writer when adapter available, write metrics after stage loop
+  - `tests/unit/test_run_metrics_writer.py` — 10 tests covering table creation, field validation, 9-stage writes, runner integration
+  - `prd.json` — marked US-076 as passes: true
+- **Learnings for future iterations:**
+  - RunMetricsWriter follows exact same pattern as AuditLogger and CheckpointManager: adapter-based, ensure_table() + write method
+  - PipelineRunner already collects stage.metrics.to_dict() into self.stage_metrics — just needed to wire up persistence
+  - Metrics are written AFTER the stage loop but BEFORE checkpoint mark_completed — ensures metrics are persisted even if checkpoint fails
+  - Total test count: 1029 passed (unit tests)
 ---
