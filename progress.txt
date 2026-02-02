@@ -11,6 +11,9 @@
 - Shared fixtures in `tests/conftest.py`: sample_canonical_event, sample_encounter, sample_event_batch
 - For cross-module Pydantic models on GlobalConfig, use `Any` type (not forward refs) to avoid `model_rebuild()` issues
 - Config loader: `load_config(config_path, customer_id)` returns GlobalConfig with `.sources` and `.facility_aliases` attached
+- PostgresAdapter takes `config: dict[str, Any]` with keys: host, port, database, user, password, schema
+- SQLAlchemy `text()` required for raw SQL strings; `result.mappings()` returns dict rows
+- Watermark storage pattern: `asre_metadata` table with key-value columns, `ON CONFLICT` upsert
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -39,7 +42,7 @@
 
 ## Phase 3: Ingest Layer (US-018 to US-026)
 - [x] US-018: Define IngestAdapter interface (priority 18)
-- [ ] US-019: Implement PostgreSQL adapter (priority 19)
+- [x] US-019: Implement PostgreSQL adapter (priority 19)
 - [ ] US-020: Implement full mode ingest (priority 20)
 - [ ] US-021: Implement incremental mode with lookback buffer (priority 21)
 - [ ] US-022: Implement source_record_id dedup on ingest (priority 22)
@@ -379,4 +382,26 @@
   - `write_records` returns `int` count of records written
   - 18 tests covering: abstract instantiation (2), required methods exist (7), incomplete subclass (1), complete subclass operations (8)
   - Total test count: 214 (196 existing + 18 new)
+---
+
+## 2026-02-02 - US-019
+- Implemented: PostgresAdapter in `asre/ingest/postgres.py` implementing IngestAdapter using SQLAlchemy + psycopg2
+- connect() builds postgresql+psycopg2 URL from config dict (host, port, database, user, password, schema)
+- Schema is set via search_path in connect_args
+- Connection errors are caught and re-raised as ConnectionError with clear message
+- read_source() uses `text()` + `result.mappings()` for dict results
+- get_watermark/set_watermark use asre_metadata table (key-value pattern)
+- write_records builds dynamic INSERT from record keys
+- disconnect() safely handles case where connect() was never called
+- Files changed: asre/ingest/postgres.py (new), tests/unit/test_postgres_adapter.py (new)
+- **Learnings for future iterations:**
+  - SQLAlchemy `create_engine` takes a URL string like `postgresql+psycopg2://user:pass@host:port/db`
+  - Use `connect_args={"options": "-csearch_path=schema"}` to set default schema
+  - `result.mappings()` returns dict-like rows from SQLAlchemy result
+  - Use `text()` from sqlalchemy for raw SQL queries
+  - Mock `create_engine` at module level: `@patch("asre.ingest.postgres.create_engine")`
+  - For tests that need a connected adapter, set `adapter._connection` directly to a MagicMock
+  - Watermark storage uses `asre_metadata` table with `ON CONFLICT` upsert pattern
+  - 17 tests covering: subclass verification (2), connection management (5), read_source (3), execute_ddl (1), write_records (2), watermark (2), connection URL (2)
+  - Total test count: 231 (214 existing + 17 new)
 ---
