@@ -17,7 +17,7 @@
 - [x] US-002: Define CanonicalEvent dataclass (priority 2)
 - [x] US-003: Define Encounter dataclass (priority 3)
 - [x] US-004: Define Episode dataclass (priority 4)
-- [ ] US-005: Define DiagnosisCode model (priority 5)
+- [x] US-005: Define DiagnosisCode model (priority 5)
 - [ ] US-006: Define EventBatch dataclass (priority 6)
 - [ ] US-007: Implement structured JSON logging (priority 7)
 - [ ] US-008: Implement per-stage metrics tracking (priority 8)
@@ -151,9 +151,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 4
+- Completed: 5
 - In progress: 0
-- Not started: 105
+- Not started: 103
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -194,4 +194,14 @@
   - Same pattern as Encounter: required fields first, optional with defaults after
   - `facility_sequence` is `list[str]` (ordered list of facility IDs in the episode)
   - `total_los_days` is float (not int) to capture partial days
+---
+
+## 2026-02-01 - US-005
+- Implemented: DiagnosisCode dataclass in `asre/models/diagnosis.py` with fields: code, type, sequence, poa
+- Added `to_dict()` and `from_dict()` methods for round-trip serialization to/from dict (JSON/VARIANT storage)
+- Files changed: asre/models/diagnosis.py, tests/unit/test_diagnosis.py
+- **Learnings for future iterations:**
+  - DiagnosisCode is a simple dataclass with 2 required fields (code, type) and 2 optional (sequence, poa)
+  - `to_dict()` / `from_dict()` pattern useful for any model that needs JSON column storage
+  - `from_dict` uses `dict.get()` for optional fields to handle missing keys gracefully
 ---
