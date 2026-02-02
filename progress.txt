@@ -90,6 +90,9 @@
 - encounter_type derivation: StitchedEncounter.encounter_type "ed" maps to "ed_only" in metadata; None maps to "outpatient"
 - Admit/discharge timestamp derivation uses _ADMIT_EVENT_TYPES / _DISCHARGE_EVENT_TYPES sets (same as StitchedEncounter)
 - Source type detection for has_adt/has_claims/has_auth: prefix-based on source_system name (startswith "adt"/"claims"/"auth")
+- StitchStage stores encounters on `stage.encounters` and metadata on `stage.encounter_metadata`; reads encounter_stitching config from context.config
+- StitchStage._build_stitcher() selectively passes config kwargs to EncounterStitcher — missing keys use EncounterStitcher defaults
+- Test timestamps for stitching tests must be within 48h (default time_window_hours) or events will produce separate encounters
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -157,7 +160,7 @@
 - [x] US-049: Handle cancellation events (priority 49)
 - [x] US-050: Deterministic encounter IDs (priority 50)
 - [x] US-051: Set encounter metadata (priority 51)
-- [ ] US-052: Implement StitchStage (priority 52)
+- [x] US-052: Implement StitchStage (priority 52)
 
 ## Phase 7: Deduplication (US-053 to US-057)
 - [ ] US-053: Identify duplicate events within encounter (priority 53)
@@ -1018,4 +1021,23 @@
   - Source type detection uses same prefix matching pattern as EncounterStitcher._extract_source_type()
   - 23 tests covering: encounter_type (6), status (3), timestamps (6), source derivation (6), obs_to_ip (2)
   - Total test count: 768 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-052
+- Implemented: StitchStage in `asre/stitch/stage.py` implementing PipelineStage
+- Processes EventBatch of canonical events via EncounterStitcher, produces list of StitchedEncounter on `stage.encounters`
+- Builds EncounterMetadata for each encounter on `stage.encounter_metadata`
+- Reads encounter_stitching config from PipelineContext.config (time_window_hours, facility_must_match, same_timestamp_tiebreaker, patient_class_transitions)
+- Falls back to EncounterStitcher defaults when config keys missing
+- Records stage metrics: records_in (events), records_out (encounters), stage_name="stitch"
+- Tracks transfers_detected (unique transfer chains) and cancellations_processed (CANCEL_ADMIT/CANCEL_DISCHARGE events)
+- Files changed: asre/stitch/stage.py (new), tests/unit/test_stitch_stage.py (new)
+- **Learnings for future iterations:**
+  - StitchStage stores results on `self.encounters` and `self.encounter_metadata` — downstream stages (dedup, reconcile, score) access these
+  - _build_stitcher() selectively passes config keys as kwargs to EncounterStitcher — only passes keys that exist in config to let defaults apply
+  - Transfer count uses unique chain tuples in a set — each chain is counted once regardless of how many encounters share it
+  - Cancellation count scans input events directly (not encounters) since cancellation events are attached to encounters during stitching
+  - Test timestamps must be within 48h default time_window_hours — events farther apart will produce separate encounters
+  - 18 tests covering: interface (3), processing (6), metrics (6), config-driven (2), end-to-end (1)
+  - Total test count: 786 passed + 16 skipped (integration tests skip without Postgres)
 ---
