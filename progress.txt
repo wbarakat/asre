@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- ReadmissionDetector in `asre/readmission/detector.py`: detects readmissions by grouping encounters by patient_key, sorting by admit_ts, checking if current acute admit is within 30 days of prior acute discharge; sets is_readmission and readmission_days on ReconciledEncounter via setattr
+- ReadmissionDetector is invoked in MaterializeStage.run() before encounter_to_record(); uses facility_registry_map from context.config to determine acute status
+- encounter_to_record uses getattr(enc, "is_readmission", None) to read dynamically-set readmission attributes from ReconciledEncounter
 - MaterializeStage in `asre/materialize/stage.py`: encounters_in set by runner; writes to admission_events_unified AND asre_encounters_detail; uses merge/upsert (DELETE + INSERT) keyed on encounter_id
 - assign_event_roles(enc) in materialize/stage.py: assigns role_in_encounter to each event using reconciled_timestamps; admit_anchor matches admit_ts + admit event type, discharge_anchor matches discharge_ts + discharge event type, "duplicate" preserved from dedup, everything else is "supporting"
 - DETAIL_TABLE_NAME = "asre_encounters_detail" in materialize/stage.py; event_to_detail_record(event, encounter_id) converts to flat dict with encounter_id, event_id, event_type, event_ts, source_system, role_in_encounter
@@ -1426,4 +1429,20 @@
   - When no reconciled_timestamps exist, all non-duplicate events default to "supporting"
   - Existing tests that use assert_called_once() on adapter mocks break when new write_records calls are added; always filter by table name
   - Total test count: 991 passed (unit tests)
+---
+
+## 2026-02-02 - US-074
+- What was implemented: ReadmissionDetector class that flags encounters as readmissions when a patient is admitted to any acute facility within 30 days of a prior discharge from an acute facility. Integrated into MaterializeStage to run before record conversion.
+- Files changed:
+  - `asre/readmission/__init__.py` (new) — empty module init
+  - `asre/readmission/detector.py` (new) — ReadmissionDetector class with detect() method
+  - `asre/materialize/stage.py` — integrated ReadmissionDetector, updated encounter_to_record to read is_readmission/readmission_days via getattr
+  - `tests/unit/test_readmission_detector.py` (new) — 8 tests covering all acceptance criteria
+  - `prd.json` — marked US-074 as passes: true
+- **Learnings for future iterations:**
+  - ReconciledEncounter uses __getattr__ delegation to StitchedEncounter; dynamic attributes set via setattr are accessible but mypy can't verify them without type: ignore[attr-defined]
+  - Facility type lookup uses facility_registry_map from context.config (populated by pipeline runner after facility_normalize stage)
+  - Only facility_type="acute" counts for readmission detection; facility_type_map maps facility_canonical_id -> facility type string
+  - The replace_all parameter in Edit tool replaces ALL occurrences including in the middle of lines — avoid using it when the replacement string could match partial lines
+  - Total test count: 999 passed (unit tests)
 ---

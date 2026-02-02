@@ -16,6 +16,7 @@ from asre.models.batch import EventBatch
 from asre.models.canonical_event import CanonicalEvent
 from asre.observability.metrics import StageMetrics
 from asre.pipeline.runner import PipelineContext, PipelineStage
+from asre.readmission.detector import ReadmissionDetector
 from asre.reconcile.stage import ReconciledEncounter
 
 logger = logging.getLogger(__name__)
@@ -196,8 +197,8 @@ def encounter_to_record(
         "principal_diagnosis": principal_diagnosis,
         "admitting_diagnosis": admitting_diagnosis,
         "diagnosis_codes": json.dumps(diagnosis_codes) if diagnosis_codes else None,
-        "is_readmission": None,
-        "readmission_days": None,
+        "is_readmission": getattr(enc, "is_readmission", None),
+        "readmission_days": getattr(enc, "readmission_days", None),
         "obs_to_ip_conversion": enc.obs_to_ip_conversion,
         "transfer_chain": json.dumps(transfer_chain) if transfer_chain else None,
         "episode_id": None,
@@ -282,6 +283,15 @@ class MaterializeStage(PipelineStage):
                 )
                 self.metrics.records_out = 0
                 return batch
+
+            # Run readmission detection before materialization
+            facility_type_map: dict[str, str] = context.config.get(
+                "facility_registry_map", {}
+            )
+            readmission_detector = ReadmissionDetector(
+                facility_type_map=facility_type_map
+            )
+            readmission_detector.detect(encounters)
 
             # Ensure tables exist
             self._ensure_table(adapter)
