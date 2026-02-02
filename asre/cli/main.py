@@ -60,6 +60,105 @@ def validate_config(config_path: str, customer_id: str) -> None:
         sys.exit(1)
 
 
+def _create_pipeline_runner(
+    config_path: str,
+    customer_id: str,
+    mode: str,
+) -> Any:
+    """Create a PipelineRunner from customer config.
+
+    Args:
+        config_path: Root config directory path.
+        customer_id: Customer subdirectory name.
+        mode: Pipeline run mode ('full' or 'incremental').
+
+    Returns:
+        Configured PipelineRunner instance.
+    """
+    from asre.ingest.postgres import PostgresAdapter
+    from asre.pipeline.runner import PipelineRunner
+
+    global_config = load_config(config_path, customer_id)
+
+    pipeline_config: dict[str, Any] = {}
+    pipeline_config["customer"] = {
+        "customer_id": global_config.customer.customer_id,
+        "customer_name": global_config.customer.customer_name,
+    }
+    pipeline_config["sources"] = global_config.sources
+    pipeline_config["facility_aliases"] = global_config.facility_aliases
+
+    if hasattr(global_config, "encounter_stitching"):
+        pipeline_config["encounter_stitching"] = global_config.encounter_stitching
+    if hasattr(global_config, "deduplication"):
+        pipeline_config["deduplication"] = global_config.deduplication
+    if hasattr(global_config, "reconciliation"):
+        pipeline_config["reconciliation"] = global_config.reconciliation
+    if hasattr(global_config, "confidence_scoring"):
+        pipeline_config["confidence_scoring"] = global_config.confidence_scoring
+    if hasattr(global_config, "facility_normalization"):
+        pipeline_config["facility_normalization"] = global_config.facility_normalization
+
+    # Connect adapter for database operations
+    adapter = PostgresAdapter(global_config.warehouse.connection)
+    adapter.connect()
+    pipeline_config["adapter"] = adapter
+
+    return PipelineRunner(config=pipeline_config, mode=mode)
+
+
+@cli.command("run")
+@click.option(
+    "--mode",
+    type=click.Choice(["full", "incremental"]),
+    default="incremental",
+    help="Pipeline run mode (default: incremental).",
+)
+@click.option(
+    "--resume",
+    "resume_run_id",
+    default=None,
+    help="Resume a previously failed run by its run_id.",
+)
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def run_pipeline(
+    mode: str,
+    resume_run_id: str | None,
+    config_path: str,
+    customer_id: str,
+) -> None:
+    """Run the ASRE pipeline."""
+    try:
+        runner = _create_pipeline_runner(
+            config_path=config_path,
+            customer_id=customer_id,
+            mode=mode,
+        )
+        result: dict[str, Any] = runner.run(resume_run_id=resume_run_id)
+        click.echo(
+            f"Pipeline completed: run_id={result['run_id']}, "
+            f"mode={result['mode']}, "
+            f"stages_completed={result['stages_completed']}"
+        )
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
 @cli.command("test-connection")
 def test_connection() -> None:
     """Test warehouse connectivity."""

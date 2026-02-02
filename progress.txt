@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- CLI `asre run` command in `asre/cli/main.py`: accepts `--mode full|incremental` (default incremental), `--resume <run_id>`, `--config-path`, `--customer-id`; uses `_create_pipeline_runner()` to build runner
+- `_create_pipeline_runner(config_path, customer_id, mode)` in cli/main.py: loads config, creates adapter, builds PipelineRunner — mock this in CLI tests
 - CheckpointManager in `asre/pipeline/checkpoint.py`: stores run progress in asre_checkpoints table; save_checkpoint(), load_checkpoint(), mark_completed(), mark_failed() methods
 - PipelineRunner.run() accepts optional `resume_run_id` param; skips stages up to checkpoint's stage_index; saves checkpoint after each stage; marks failed/completed
 - PipelineRunner._get_checkpoint_manager() returns CheckpointManager if config has "adapter" key, else None (no checkpointing without adapter)
@@ -1368,4 +1370,17 @@
   - On stage failure, checkpoint records the PREVIOUS completed stage's index so resume starts at the failed stage
   - _STAGE_ORDER list indices are used as stage_index in checkpoints for resume position tracking
   - Total test count: 945 passed (unit tests)
+---
+
+## 2026-02-02 - US-071
+- What was implemented: `asre run` CLI command with `--mode` and `--resume` flags; `_create_pipeline_runner()` helper to construct PipelineRunner from customer config
+- Files changed:
+  - `asre/cli/main.py` — added `run_pipeline` CLI command, `_create_pipeline_runner()` helper
+  - `tests/unit/test_resume.py` — 11 tests covering CLI run command, resume logic with mock checkpoints, error handling
+- **Learnings for future iterations:**
+  - PipelineRunner.run() already supported `resume_run_id` param from US-070; US-071 only needed CLI wiring
+  - For mypy strict: when assigning `dict[str, DummyStage]` to `runner._stages` (typed as `dict[str, PipelineStage]`), use `# type: ignore[assignment]` not `# type: ignore[attr-defined]` — dict is invariant
+  - Click CLI commands use `@cli.command("name")` decorator; `--resume` uses `"resume_run_id"` as param name via Click's `@click.option` naming
+  - `_create_pipeline_runner` is the seam for testing: mock it in CLI tests to avoid real config/adapter setup
+  - Total test count: 956 passed (unit tests)
 ---
