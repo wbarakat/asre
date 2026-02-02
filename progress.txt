@@ -82,7 +82,7 @@
 - [x] US-029: Implement paired event emission for claims (priority 29)
 - [x] US-030: Implement patient class resolution for claims (priority 30)
 - [x] US-031: Implement diagnosis code mapping (priority 31)
-- [ ] US-032: Implement auth status mapping (priority 32)
+- [x] US-032: Implement auth status mapping (priority 32)
 - [ ] US-033: Implement error tolerance for unparseable records (priority 33)
 - [ ] US-034: Implement CanonicalizeStage (priority 34)
 
@@ -623,6 +623,25 @@
   - When parsing simple code strings (not full objects), default type to "ICD-10-CM" and assign sequential sequence numbers
   - `to_serializable()` returns None (not empty list) for empty codes — matches CanonicalEvent.diagnosis_codes Optional semantics
   - DiagnosisCodeMapper reuses same `_get_optional` pattern as FieldMapper and PairedEventEmitter
+- AuthStatusMapper in `asre/canonicalize/auth_status_mapper.py`: maps auth status codes to canonical values, derives event_type (approved->AUTH_APPROVED, denied->AUTH_DENIED, pending->AUTH_REQUESTED), sets auth_flag=True always
+- Auth status -> event_type mapping: only approved/denied/pending have derived event_types; modified and others keep existing event_type from EventTypeResolver
   - 26 tests covering: principal_diagnosis (4), admitting_diagnosis (3), JSON array strings (3), JSON array objects (1), native list (1), delimited strings (6), edge cases (6), serialization (2)
   - Total test count: 424 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-032
+- Implemented: AuthStatusMapper class in `asre/canonicalize/auth_status_mapper.py`
+- Maps source auth status codes (A, D, P, M) to canonical values (approved, denied, pending, modified) using AuthStatusMap config
+- Derives event_type from canonical status: approved->AUTH_APPROVED, denied->AUTH_DENIED, pending->AUTH_REQUESTED
+- Modified status does not derive event_type (keeps whatever EventTypeResolver set via event_type_rules)
+- Sets auth_flag=True on ALL auth source events, regardless of status mapping result
+- Handles edge cases: missing source field, None values, unknown status codes, whitespace in codes
+- Files changed: asre/canonicalize/auth_status_mapper.py (new), tests/unit/test_auth_status_mapper.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - Auth status -> event_type has only 3 mappings (approved, denied, pending); modified and any future statuses keep event_type from EventTypeResolver
+  - auth_flag=True is set unconditionally for all auth events — it indicates source type, not status
+  - AuthStatusMapper follows same mutate-in-place pattern as EventTypeResolver (returns same event object)
+  - Whitespace stripping on source status code values ensures reliable mapping
+  - 22 tests covering: construction (1), status mapping (7), event_type derivation (5), auth_flag (6), mutation behavior (2), whitespace (1)
+  - Total test count: 446 passed + 16 skipped (integration tests skip without Postgres)
 ---
