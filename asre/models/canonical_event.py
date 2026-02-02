@@ -37,4 +37,5 @@ class CanonicalEvent:
     diagnosis_codes: list[dict[str, Any]] | None = None
     auth_status: str | None = None
     payer_id: str | None = None
+    role_in_encounter: str | None = None
     _raw_payload: dict[str, Any] | None = field(default=None, repr=False)

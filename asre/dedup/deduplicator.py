@@ -150,3 +150,20 @@ class Deduplicator:
             duplicates.extend(sorted_group[1:])
 
         return kept, duplicates
+
+    @staticmethod
+    def mark_roles(
+        kept: list[CanonicalEvent],
+        duplicates: list[CanonicalEvent],
+    ) -> None:
+        """Mark duplicate events with role_in_encounter = 'duplicate'.
+
+        Kept events retain their existing role_in_encounter value.
+        Duplicate events are marked with 'duplicate' for the detail table.
+
+        Args:
+            kept: Events kept after resolution (roles unchanged).
+            duplicates: Events identified as duplicates (role set to 'duplicate').
+        """
+        for event in duplicates:
+            event.role_in_encounter = "duplicate"

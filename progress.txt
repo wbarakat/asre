@@ -2,6 +2,8 @@
 - Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
 - Deduplicator in `asre/dedup/deduplicator.py`: find_duplicates(events) returns list of duplicate groups; uses union-find for transitive clustering
 - Deduplicator.resolve_duplicates(groups, source_priority) returns (kept, duplicates) tuple; sorts by -priority then ingested_at
+- Deduplicator.mark_roles(kept, duplicates) is a static method — sets role_in_encounter='duplicate' on duplicate events; kept events unchanged
+- CanonicalEvent.role_in_encounter: str | None — values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
 - Deduplicator._source_type() extracts prefix (adt/claims/auth) from source_system name for priority lookup; unknown sources default to priority 0
 - Deduplicator match key uses getattr on CanonicalEvent; default match_fields: patient_key, event_type, facility_canonical_id
 - All `__init__.py` files are empty placeholders
@@ -1071,4 +1073,18 @@
   - _source_type() extracts prefix from source_system name (e.g., "adt_vendor_x" -> "adt"); unknown sources get priority 0
   - Sort key for resolution: (-priority, ingested_at) — highest priority first, then earliest ingestion
   - source_priority dict comes from ReconciliationConfig.timestamp_priority in config schema
+---
+
+## 2026-02-02 - US-055
+- What was implemented: Mark duplicates for audit — added `role_in_encounter` field to CanonicalEvent and `mark_roles()` static method to Deduplicator
+- Files changed:
+  - `asre/models/canonical_event.py` — added `role_in_encounter: str | None = None` field
+  - `asre/dedup/deduplicator.py` — added `mark_roles(kept, duplicates)` static method
+  - `tests/unit/test_dedup_audit.py` — 6 new tests covering role marking
+  - `prd.json` — marked US-055 as passes: true
+- **Learnings for future iterations:**
+  - `role_in_encounter` is on CanonicalEvent (not StitchedEncounter); values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
+  - `Deduplicator.mark_roles(kept, duplicates)` is a static method — call after `resolve_duplicates()` to set roles
+  - Kept events retain their existing role_in_encounter; duplicates get overwritten to "duplicate"
+  - Pre-existing mypy errors in 6 test files (12 errors) — not related to dedup changes
 ---
