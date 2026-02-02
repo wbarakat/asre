@@ -15,7 +15,7 @@
 ## Phase 1: Project Scaffold & Core Models (US-001 to US-011)
 - [x] US-001: Create Python project structure (priority 1)
 - [x] US-002: Define CanonicalEvent dataclass (priority 2)
-- [ ] US-003: Define Encounter dataclass (priority 3)
+- [x] US-003: Define Encounter dataclass (priority 3)
 - [ ] US-004: Define Episode dataclass (priority 4)
 - [ ] US-005: Define DiagnosisCode model (priority 5)
 - [ ] US-006: Define EventBatch dataclass (priority 6)
@@ -151,9 +151,9 @@
 ---
 ## Summary
 - Total stories: 108
-- Completed: 2
+- Completed: 3
 - In progress: 0
-- Not started: 106
+- Not started: 105
 
 ## 2026-02-01 - US-001
 - Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
@@ -174,4 +174,14 @@
   - `list[dict[str, Any]]` works for diagnosis_codes (JSON-compatible structure)
   - `field(default=None, repr=False)` useful for `_raw_payload` to keep repr clean
   - Test directories need `__init__.py` files for pytest to discover them
+---
+
+## 2026-02-01 - US-003
+- Implemented: Encounter dataclass in `asre/models/encounter.py` with all 32 fields from SPEC §3.4 (admission_events_unified)
+- Files changed: asre/models/encounter.py, tests/unit/test_encounter.py
+- **Learnings for future iterations:**
+  - Follow same pattern as CanonicalEvent: required fields first, optional fields with defaults after
+  - Encounter has 18 required fields and 14 optional fields
+  - `diagnosis_codes` uses same `list[dict[str, Any]]` pattern as CanonicalEvent for JSON compatibility
+  - `transfer_chain` and `source_event_ids` are `list[str]` (required vs optional distinction matters)
 ---
