@@ -1,0 +1,177 @@
+## Codebase Patterns
+- Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
+- All `__init__.py` files are empty placeholders
+- CLI entry point: `asre.cli.main:cli` using Click
+- mypy configured in strict mode in pyproject.toml
+- pytest configured with testpaths = ["tests"] in pyproject.toml
+- Test directories (tests/, tests/unit/, tests/integration/) need `__init__.py` files
+- Use `from __future__ import annotations` in dataclass modules for `str | None` syntax
+- Run tests with `python3 -m pytest` (not `python -m pytest`) on this system
+
+# ASRE Progress Tracker
+# Generated from prd.json - 108 User Stories
+# Status: [ ] = not started, [~] = in progress, [x] = done
+
+## Phase 1: Project Scaffold & Core Models (US-001 to US-011)
+- [x] US-001: Create Python project structure (priority 1)
+- [x] US-002: Define CanonicalEvent dataclass (priority 2)
+- [ ] US-003: Define Encounter dataclass (priority 3)
+- [ ] US-004: Define Episode dataclass (priority 4)
+- [ ] US-005: Define DiagnosisCode model (priority 5)
+- [ ] US-006: Define EventBatch dataclass (priority 6)
+- [ ] US-007: Implement structured JSON logging (priority 7)
+- [ ] US-008: Implement per-stage metrics tracking (priority 8)
+- [ ] US-009: Define PipelineStage interface (priority 9)
+- [ ] US-010: Scaffold dbt project for PostgreSQL (priority 10)
+- [ ] US-011: Set up test infrastructure (priority 11)
+
+## Phase 2: Configuration System (US-012 to US-017)
+- [ ] US-012: Define global config Pydantic schema (priority 12)
+- [ ] US-013: Define source config Pydantic schema (priority 13)
+- [ ] US-014: Define facility alias config schema (priority 14)
+- [ ] US-015: Implement YAML config loader with env var substitution (priority 15)
+- [ ] US-016: Create example customer config (priority 16)
+- [ ] US-017: Implement CLI skeleton (priority 17)
+
+## Phase 3: Ingest Layer (US-018 to US-026)
+- [ ] US-018: Define IngestAdapter interface (priority 18)
+- [ ] US-019: Implement PostgreSQL adapter (priority 19)
+- [ ] US-020: Implement full mode ingest (priority 20)
+- [ ] US-021: Implement incremental mode with lookback buffer (priority 21)
+- [ ] US-022: Implement source_record_id dedup on ingest (priority 22)
+- [ ] US-023: Implement exclude filters (priority 23)
+- [ ] US-024: Implement watermark management (priority 24)
+- [ ] US-025: Implement IngestStage (priority 25)
+- [ ] US-026: Implement basic migration infrastructure (priority 26)
+
+## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
+- [ ] US-027: Implement field mapper (priority 27)
+- [ ] US-028: Implement event type resolver for ADT (priority 28)
+- [ ] US-029: Implement paired event emission for claims (priority 29)
+- [ ] US-030: Implement patient class resolution for claims (priority 30)
+- [ ] US-031: Implement diagnosis code mapping (priority 31)
+- [ ] US-032: Implement auth status mapping (priority 32)
+- [ ] US-033: Implement error tolerance for unparseable records (priority 33)
+- [ ] US-034: Implement CanonicalizeStage (priority 34)
+
+## Phase 5: Facility Normalization (US-035 to US-042)
+- [ ] US-035: Implement string normalization pipeline (priority 35)
+- [ ] US-036: Implement exact alias matching (priority 36)
+- [ ] US-037: Implement NPI/CCN matching (priority 37)
+- [ ] US-038: Implement fuzzy matching (priority 38)
+- [ ] US-039: Handle unresolved facilities (priority 39)
+- [ ] US-040: Implement facility registry (priority 40)
+- [ ] US-041: Implement FacilityNormalizationStage (priority 41)
+- [ ] US-042: Add facility CLI commands (priority 42)
+
+## Phase 6: Encounter Stitching (US-043 to US-052)
+- [ ] US-043: Basic encounter stitching (priority 43)
+- [ ] US-044: Facility matching requirement for stitching (priority 44)
+- [ ] US-045: ED to IP merge (priority 45)
+- [ ] US-046: OBS to IP conversion (priority 46)
+- [ ] US-047: IP to IP as new encounter (priority 47)
+- [ ] US-048: Transfer chain detection (priority 48)
+- [ ] US-049: Handle cancellation events (priority 49)
+- [ ] US-050: Deterministic encounter IDs (priority 50)
+- [ ] US-051: Set encounter metadata (priority 51)
+- [ ] US-052: Implement StitchStage (priority 52)
+
+## Phase 7: Deduplication (US-053 to US-057)
+- [ ] US-053: Identify duplicate events within encounter (priority 53)
+- [ ] US-054: Resolve duplicates by source priority (priority 54)
+- [ ] US-055: Mark duplicates for audit (priority 55)
+- [ ] US-056: Encounter-level dedup (priority 56)
+- [ ] US-057: Implement DedupStage (priority 57)
+
+## Phase 8: Cross-Source Reconciliation (US-058 to US-063)
+- [ ] US-058: Timestamp selection by source priority (priority 58)
+- [ ] US-059: Classification resolution by source priority (priority 59)
+- [ ] US-060: Auth reconciliation rules (priority 60)
+- [ ] US-061: Flag timestamp mismatches (priority 61)
+- [ ] US-062: Flag missing event patterns (priority 62)
+- [ ] US-063: Implement ReconcileStage (priority 63)
+
+## Phase 9: Confidence Scoring (US-064 to US-068)
+- [ ] US-064: Base confidence score computation (priority 64)
+- [ ] US-065: Penalty application to confidence score (priority 65)
+- [ ] US-066: Populate confidence_flags array (priority 66)
+- [ ] US-067: Stale encounter detection (priority 67)
+- [ ] US-068: Implement ScoreStage (priority 68)
+
+## Phase 10: Materialization & Pipeline Orchestration (US-069 to US-080)
+- [ ] US-069: Implement pipeline orchestrator (priority 69)
+- [ ] US-070: Implement stage checkpointing (priority 70)
+- [ ] US-071: Implement resume support (priority 71)
+- [ ] US-072: Implement encounter materialization (priority 72)
+- [ ] US-073: Implement encounters detail materialization (priority 73)
+- [ ] US-074: Implement readmission detection (priority 74)
+- [ ] US-075: Implement audit logging (priority 75)
+- [ ] US-076: Write run metrics (priority 76)
+- [ ] US-077: Implement error tolerance (priority 77)
+- [ ] US-078: Implement CLI diagnostic commands (priority 78)
+- [ ] US-079: Create dbt mart models (priority 79)
+- [ ] US-080: Create output table migrations (priority 80)
+
+## Phase 11: Quality Metrics & Alerting (US-081 to US-085)
+- [ ] US-081: Implement quality metric computation (priority 81)
+- [ ] US-082: Implement threshold evaluation (priority 82)
+- [ ] US-083: Implement webhook alerting (priority 83)
+- [ ] US-084: Implement dbt schema tests (priority 84)
+- [ ] US-085: Implement QualityCheckStage (priority 85)
+
+## Phase 12: Episode of Care Layer (US-086 to US-096)
+- [ ] US-086: Implement episode stitching algorithm (priority 86)
+- [ ] US-087: Implement readmission linkage (priority 87)
+- [ ] US-088: Implement post-acute linkage (priority 88)
+- [ ] US-089: Implement ED bounce-back linkage (priority 89)
+- [ ] US-090: Generate deterministic episode IDs (priority 90)
+- [ ] US-091: Implement condition grouper interface (priority 91)
+- [ ] US-092: Implement AHRQ CCS grouper (priority 92)
+- [ ] US-093: Implement episode-level confidence scoring (priority 93)
+- [ ] US-094: Populate episode metadata (priority 94)
+- [ ] US-095: Implement episode stages (priority 95)
+- [ ] US-096: Support independent episode recomputation (priority 96)
+
+## Phase 13: Warehouse Adapters (US-097 to US-101)
+- [ ] US-097: Implement Snowflake adapter (priority 97)
+- [ ] US-098: Implement BigQuery adapter (priority 98)
+- [ ] US-099: Implement Redshift adapter (priority 99)
+- [ ] US-100: Handle cross-warehouse dbt compatibility (priority 100)
+- [ ] US-101: Handle cross-warehouse migrations (priority 101)
+
+## Phase 14: Docker & Deployment (US-102 to US-108)
+- [ ] US-102: Create production Dockerfile (priority 102)
+- [ ] US-103: Implement auto-migration on startup (priority 103)
+- [ ] US-104: Implement dry-run mode (priority 104)
+- [ ] US-105: Add health check endpoint (priority 105)
+- [ ] US-106: Configure CI/CD pipeline (priority 106)
+- [ ] US-107: Validate environment variable configuration (priority 107)
+- [ ] US-108: Document deployment process (priority 108)
+
+---
+## Summary
+- Total stories: 108
+- Completed: 2
+- In progress: 0
+- Not started: 106
+
+## 2026-02-01 - US-001
+- Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
+- Files changed: pyproject.toml, asre/**/__init__.py (18 files), asre/cli/main.py
+- **Learnings for future iterations:**
+  - The pip package for snapshot testing is `syrupy`, not `pytest-syrupy` as mentioned in the PRD
+  - `pip install -e ".[dev]"` installs both runtime and dev dependencies
+  - mypy strict mode passes on empty __init__.py files
+  - pytest exits with code 5 when no tests are collected (not a failure)
+  - dbt-core and dbt-postgres install cleanly together
+---
+
+## 2026-02-01 - US-002
+- Implemented: CanonicalEvent dataclass in `asre/models/canonical_event.py` with all 20 fields from SPEC §3.2
+- Files changed: asre/models/canonical_event.py, tests/__init__.py, tests/unit/__init__.py, tests/unit/test_canonical_event.py
+- **Learnings for future iterations:**
+  - Use `from __future__ import annotations` for `str | None` syntax in dataclasses with Python 3.11
+  - `list[dict[str, Any]]` works for diagnosis_codes (JSON-compatible structure)
+  - `field(default=None, repr=False)` useful for `_raw_payload` to keep repr clean
+  - Test directories need `__init__.py` files for pytest to discover them
+---
