@@ -84,6 +84,8 @@
 - CANCEL_ADMIT sets status="cancelled"; CANCEL_DISCHARGE clears has_discharge and sets status="open"
 - Cancellation events stitch normally (not admit-type, so _should_force_new_encounter doesn't trigger)
 - _handle_cancellation() called BEFORE discharge tracking in add_event() — order matters for CANCEL_DISCHARGE
+- Deterministic encounter_id: SHA-256 of `patient_key|facility_canonical_id|first_admit_source_record_id`; generated after stitching via `generate_encounter_id()`
+- StitchedEncounter._get_first_admit_source_record_id() finds first ADMIT-type event's source_record_id; falls back to first event if no admit
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -149,7 +151,7 @@
 - [x] US-047: IP to IP as new encounter (priority 47)
 - [x] US-048: Transfer chain detection (priority 48)
 - [x] US-049: Handle cancellation events (priority 49)
-- [ ] US-050: Deterministic encounter IDs (priority 50)
+- [x] US-050: Deterministic encounter IDs (priority 50)
 - [ ] US-051: Set encounter metadata (priority 51)
 - [ ] US-052: Implement StitchStage (priority 52)
 
@@ -977,4 +979,22 @@
   - Test timestamps must be within 48h time window (default) to ensure events stitch into same encounter
   - 10 tests covering: CANCEL_ADMIT (3 — status, events kept, attaches to recent), CANCEL_DISCHARGE (4 — reopens, clears has_discharge, events kept, attaches correctly), facility matching (1), default status (2 — open, closed)
   - Total test count: 736 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-050
+- Implemented: Deterministic encounter IDs in `asre/stitch/encounter_stitcher.py`
+- Added `encounter_id` field to `StitchedEncounter` dataclass (default None, populated after stitching)
+- `generate_encounter_id()` method computes SHA-256 hex digest of `patient_key|facility_canonical_id|first_admit_source_record_id`
+- `_get_first_admit_source_record_id()` finds first ADMIT-type event's source_record_id; falls back to first event if no admit
+- Null facility_canonical_id uses empty string in hash input
+- IDs generated as final step in `stitch()` after transfer chain detection
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_deterministic_encounter_ids.py (new)
+- **Learnings for future iterations:**
+  - encounter_id generation must happen AFTER all stitching is complete (events, transfers, etc.) but before returning
+  - Hash input uses pipe delimiter: `patient_key|facility|source_record_id` to avoid ambiguity
+  - Full SHA-256 hex digest is 64 chars — URL-safe (all hex chars 0-9a-f)
+  - First ADMIT-type event's source_record_id is the anchor — this ensures stability across re-processing
+  - Null facility uses empty string — two encounters at null facility with same patient+source_record_id get same ID
+  - 9 tests covering: encounter_id exists (1), same inputs same ID (1), different source_record_id different ID (1), different patient_key different ID (1), different facility different ID (1), URL-safe hex string (1), first admit source_record_id used (1), null facility (1), stability across runs (1)
+  - Total test count: 745 passed + 16 skipped (integration tests skip without Postgres)
 ---
