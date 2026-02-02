@@ -38,6 +38,7 @@ class StitchedEncounter:
     encounter_type: str | None = None
     obs_to_ip_conversion: bool = False
     has_discharge: bool = False
+    transfer_chain: list[int] = field(default_factory=list)
 
     # Event types that indicate a discharge has occurred
     _DISCHARGE_EVENT_TYPES: set[str] = field(
@@ -140,12 +141,19 @@ class EncounterStitcher:
             patient_events.setdefault(event.patient_key, []).append(event)
 
         encounters: list[StitchedEncounter] = []
+        patient_encounter_indices: dict[str, list[int]] = {}
         for patient_key, pat_events in patient_events.items():
             sorted_events = self._sort_events(pat_events)
             patient_encounters = self._stitch_patient_events(
                 patient_key, sorted_events
             )
+            start_idx = len(encounters)
             encounters.extend(patient_encounters)
+            patient_encounter_indices[patient_key] = list(
+                range(start_idx, start_idx + len(patient_encounters))
+            )
+
+        self._detect_transfer_chains(encounters, patient_encounter_indices)
 
         return encounters
 
@@ -278,3 +286,97 @@ class EncounterStitcher:
                 return True
 
         return False
+
+    def _detect_transfer_chains(
+        self,
+        encounters: list[StitchedEncounter],
+        patient_encounter_indices: dict[str, list[int]],
+    ) -> None:
+        """Detect and link transfer chains across facilities for each patient.
+
+        A transfer is detected when:
+        1. Encounter A has a discharge event
+        2. Encounter B starts (admit) at a different facility
+        3. B's first event is within time_window_hours of A's last discharge event
+
+        Transfer chains are stored as lists of encounter indices on each linked encounter.
+        """
+        for _patient_key, indices in patient_encounter_indices.items():
+            if len(indices) < 2:
+                continue
+
+            # Build pairwise transfer links
+            links: list[bool] = []
+            for i in range(len(indices) - 1):
+                enc_a = encounters[indices[i]]
+                enc_b = encounters[indices[i + 1]]
+                links.append(self._is_transfer(enc_a, enc_b))
+
+            # Build chains from consecutive links
+            self._assign_transfer_chains(encounters, indices, links)
+
+    def _is_transfer(
+        self, enc_a: StitchedEncounter, enc_b: StitchedEncounter
+    ) -> bool:
+        """Check if enc_a transfers to enc_b.
+
+        Requirements:
+        - enc_a must have a discharge event
+        - enc_b must be at a different facility
+        - enc_b's first event must be within time_window_hours of enc_a's discharge
+        """
+        if not enc_a.has_discharge:
+            return False
+
+        # Must be different facilities
+        if enc_a.facility_canonical_id == enc_b.facility_canonical_id:
+            return False
+
+        # Find enc_a's last discharge timestamp
+        discharge_ts = self._get_discharge_ts(enc_a)
+        if discharge_ts is None:
+            return False
+
+        # Find enc_b's first event timestamp (admit)
+        if not enc_b.events:
+            return False
+        admit_ts = enc_b.events[0].event_ts
+
+        # Check within time window
+        time_diff = admit_ts - discharge_ts
+        return timedelta(0) <= time_diff <= timedelta(hours=self.time_window_hours)
+
+    def _get_discharge_ts(self, encounter: StitchedEncounter) -> datetime | None:
+        """Get the latest discharge event timestamp from an encounter."""
+        discharge_ts: datetime | None = None
+        for event in encounter.events:
+            if event.event_type in encounter._DISCHARGE_EVENT_TYPES:
+                if discharge_ts is None or event.event_ts > discharge_ts:
+                    discharge_ts = event.event_ts
+        return discharge_ts
+
+    def _assign_transfer_chains(
+        self,
+        encounters: list[StitchedEncounter],
+        indices: list[int],
+        links: list[bool],
+    ) -> None:
+        """Assign transfer_chain arrays to encounters based on pairwise links.
+
+        Groups consecutive True links into chains. Each encounter in a chain
+        gets the full chain (all indices in the chain).
+        """
+        i = 0
+        while i < len(indices):
+            # Find the extent of a consecutive chain starting at i
+            chain_indices = [indices[i]]
+            j = i
+            while j < len(links) and links[j]:
+                chain_indices.append(indices[j + 1])
+                j += 1
+
+            if len(chain_indices) > 1:
+                for idx in chain_indices:
+                    encounters[idx].transfer_chain = list(chain_indices)
+
+            i = j + 1

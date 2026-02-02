@@ -76,6 +76,10 @@
 - StitchedEncounter.has_discharge tracks whether a discharge event has occurred; used by `_should_force_new_encounter()` to detect IP->IP transitions
 - `_should_force_new_encounter()` checks: has_discharge + incoming admit-type event + matching new_encounter transition rule
 - Discharge event types: DISCHARGE, CLAIM_DISCHARGE, ED_DEPARTURE, OBS_END; Admit event types: ADMIT, CLAIM_ADMIT, ED_ARRIVAL, OBS_START
+- Transfer chain detection is a POST-stitching step: `_detect_transfer_chains()` runs after all encounters are stitched, scans consecutive encounters per patient
+- Transfer chain requires: (1) enc_a has discharge, (2) enc_b at different facility, (3) enc_b admit within time_window_hours of enc_a discharge
+- `transfer_chain: list[int]` on StitchedEncounter stores indices into the encounters list; empty list = no transfer
+- Multi-hop chains built from consecutive pairwise links; partial chains (A->B linked, B->C not) handled correctly
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -139,7 +143,7 @@
 - [x] US-045: ED to IP merge (priority 45)
 - [x] US-046: OBS to IP conversion (priority 46)
 - [ ] US-047: IP to IP as new encounter (priority 47)
-- [ ] US-048: Transfer chain detection (priority 48)
+- [x] US-048: Transfer chain detection (priority 48)
 - [ ] US-049: Handle cancellation events (priority 49)
 - [ ] US-050: Deterministic encounter IDs (priority 50)
 - [ ] US-051: Set encounter metadata (priority 51)
@@ -933,4 +937,23 @@
   - `_should_force_new_encounter` requires both from_class and to_class to be non-None — events without patient_class won't trigger new_encounter
   - 9 tests covering: two encounters (1), first encounter contents (1), second encounter contents (1), both inpatient type (1), default config (1), ED->IP still merges (1), OBS->IP still merges (1), different facility (1), supporting events (1)
   - Total test count: 716 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-048
+- Implemented: Transfer chain detection in `asre/stitch/encounter_stitcher.py`
+- Added `transfer_chain: list[int]` field to `StitchedEncounter` dataclass
+- Added post-stitching `_detect_transfer_chains()` method that scans consecutive encounters per patient for discharge→admit patterns across different facilities within time window
+- Helper methods: `_is_transfer()` checks pairwise transfer conditions, `_get_discharge_ts()` finds latest discharge timestamp, `_assign_transfer_chains()` groups consecutive links into chains
+- Multi-hop transfers (A→B→C) correctly produce 3-element chains shared by all encounters
+- Partial chains handled: if B→C is outside window, only A→B are linked
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_transfer_chain.py (new)
+- **Learnings for future iterations:**
+  - Transfer chain detection is a POST-stitching step — encounters are already separate (different facilities), we just link them
+  - The algorithm builds pairwise links first, then groups consecutive True links into chains
+  - `_is_transfer()` requires: has_discharge on enc_a + different facility + admit within time_window_hours of discharge
+  - `transfer_chain` stores encounter indices (not IDs) — downstream stages will convert to encounter_ids when those are generated (US-050)
+  - No discharge means no transfer — two admits at different facilities without intermediate discharge are NOT a transfer
+  - Same facility encounters are never transfers (even with discharge) — they're IP→IP new encounters handled separately
+  - 10 tests covering: basic A→B transfer (2), no transfer outside window (1), no transfer same facility (1), A→B→C chain (3), partial chain (1), different patients (1), no discharge (1)
+  - Total test count: 726 passed + 16 skipped (integration tests skip without Postgres)
 ---
