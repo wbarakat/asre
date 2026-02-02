@@ -35,6 +35,8 @@
 - `_evaluate_flag` handles `event_type IN ('V1', 'V2')` expressions for admit/discharge flag resolution
 - PairedEventEmitter in `asre/canonicalize/paired_event_emitter.py` emits two CanonicalEvents from one claims row; uses PairedEvents config for event_ts columns and event_types
 - PairedEventEmitter reuses `_parse_event_ts` and `_get_optional` patterns from FieldMapper (static methods, same logic)
+- PatientClassResolver in `asre/canonicalize/patient_class_resolver.py` evaluates SQL-like conditions (LIKE, =, IN) safely via regex (no eval)
+- `_evaluate_condition` supports: `field LIKE 'pattern%'`, `field = 'value'`, `field IN ('v1', 'v2')` — same safe parsing pattern as EventTypeResolver
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -76,7 +78,7 @@
 - [x] US-027: Implement field mapper (priority 27)
 - [x] US-028: Implement event type resolver for ADT (priority 28)
 - [x] US-029: Implement paired event emission for claims (priority 29)
-- [ ] US-030: Implement patient class resolution for claims (priority 30)
+- [x] US-030: Implement patient class resolution for claims (priority 30)
 - [ ] US-031: Implement diagnosis code mapping (priority 31)
 - [ ] US-032: Implement auth status mapping (priority 32)
 - [ ] US-033: Implement error tolerance for unparseable records (priority 33)
@@ -587,4 +589,20 @@
   - admit_flag and discharge_flag are set directly (True on respective event, None on the other) — no flag expression evaluation needed for claims
   - 19 tests covering: construction (1), emission (9), shared fields (6), unique IDs (2), raw payload (1)
   - Total test count: 385 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-030
+- Implemented: PatientClassResolver class in `asre/canonicalize/patient_class_resolver.py`
+- Evaluates patient_class_rules conditions in order against raw records; first match wins, no match returns None
+- Supports SQL-like expressions: `field LIKE 'pattern%'` (prefix), `field = 'value'` (equality), `field IN ('v1', 'v2')` (membership)
+- Safe regex-based parsing (no eval()) — same pattern as EventTypeResolver's `_evaluate_condition`
+- Handles edge cases: missing fields, None values, empty conditions list
+- Files changed: asre/canonicalize/patient_class_resolver.py (new), tests/unit/test_patient_class_resolver.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - PatientClassResolver follows same safe expression evaluation pattern as EventTypeResolver — no eval(), regex-based parsing
+  - LIKE pattern supports: prefix (`pattern%`), suffix (`%pattern`), contains (`%pattern%`), exact (no %)
+  - Conditions reference source field names directly (e.g., `bill_type_code`) not canonical field names
+  - PatientClassResolver is standalone — will be composed into CanonicalizeStage (US-034) alongside FieldMapper and EventTypeResolver
+  - 13 tests covering: construction (1), bill type mappings (5), no-match (1), first-match-wins (1), missing/None fields (2), equality (1), IN (1), empty rules (1)
+  - Total test count: 398 passed + 16 skipped (integration tests skip without Postgres)
 ---
