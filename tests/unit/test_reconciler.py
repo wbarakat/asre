@@ -455,3 +455,133 @@ class TestClassificationResolutionBySourcePriority:
         # ADT (80) > auth (40) for classification
         assert result.encounter_type == "inpatient"
         assert result.payer_id == "PAYER-ADT"
+
+
+class TestAuthReconciliationRules:
+    """US-060: Auth signals validate encounters without anchoring them."""
+
+    def test_auth_does_not_override_adt_fields(self) -> None:
+        """Encounter with auth + ADT produces auth not overriding any fields."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+            payer_id="PAYER-ADT",
+            principal_diagnosis="J18.9",
+        )
+        adt_discharge = _make_event(
+            event_id="evt-002",
+            event_type="DISCHARGE",
+            event_ts=datetime(2024, 1, 18, 14, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            discharge_flag=True,
+        )
+        auth_event = _make_event(
+            event_id="evt-003",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+            payer_id="PAYER-AUTH",
+            principal_diagnosis="Z00.0",
+        )
+        enc = _make_encounter([adt_admit, adt_discharge, auth_event])
+
+        reconciler = Reconciler()
+
+        # Timestamps: ADT should win over auth
+        ts_result = reconciler.reconcile_timestamps(enc)
+        assert ts_result.admit_ts == datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc)
+        assert ts_result.admit_source_priority == "adt"
+        assert ts_result.discharge_ts == datetime(2024, 1, 18, 14, 0, tzinfo=timezone.utc)
+        assert ts_result.discharge_source_priority == "adt"
+
+        # Classification: ADT should win over auth
+        cls_result = reconciler.reconcile_classification(enc)
+        assert cls_result.encounter_type == "inpatient"
+        assert cls_result.payer_id == "PAYER-ADT"
+        assert cls_result.principal_diagnosis == "J18.9"
+
+    def test_auth_with_matching_encounter_no_flag(self) -> None:
+        """Auth event with a matching encounter should not produce AUTH_WITHOUT_ADMIT flag."""
+        adt_admit = _make_event(
+            event_id="evt-001",
+            event_type="ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="adt_vendor_x",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        auth_event = _make_event(
+            event_id="evt-002",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([adt_admit, auth_event])
+
+        reconciler = Reconciler()
+        flags = reconciler.reconcile_auth(enc)
+
+        assert "AUTH_WITHOUT_ADMIT" not in flags
+
+    def test_orphan_auth_produces_flag(self) -> None:
+        """Auth-only encounter (no ADT or claims) produces AUTH_WITHOUT_ADMIT flag."""
+        auth_event = _make_event(
+            event_id="evt-001",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([auth_event])
+
+        reconciler = Reconciler()
+        flags = reconciler.reconcile_auth(enc)
+
+        assert "AUTH_WITHOUT_ADMIT" in flags
+
+    def test_auth_only_with_multiple_auth_events_produces_flag(self) -> None:
+        """Encounter with only auth events (no ADT/claims) produces AUTH_WITHOUT_ADMIT."""
+        auth1 = _make_event(
+            event_id="evt-001",
+            event_type="AUTH_REQUESTED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        auth2 = _make_event(
+            event_id="evt-002",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([auth1, auth2])
+
+        reconciler = Reconciler()
+        flags = reconciler.reconcile_auth(enc)
+
+        assert "AUTH_WITHOUT_ADMIT" in flags
+
+    def test_auth_with_claims_no_flag(self) -> None:
+        """Auth event alongside claims (no ADT) should not produce AUTH_WITHOUT_ADMIT."""
+        claims_admit = _make_event(
+            event_id="evt-001",
+            event_type="CLAIM_ADMIT",
+            event_ts=datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            source_system="claims_clearinghouse",
+            patient_class="inpatient",
+            admit_flag=True,
+        )
+        auth_event = _make_event(
+            event_id="evt-002",
+            event_type="AUTH_APPROVED",
+            event_ts=datetime(2024, 1, 14, 9, 0, tzinfo=timezone.utc),
+            source_system="auth_portal",
+        )
+        enc = _make_encounter([claims_admit, auth_event])
+
+        reconciler = Reconciler()
+        flags = reconciler.reconcile_auth(enc)
+
+        assert "AUTH_WITHOUT_ADMIT" not in flags

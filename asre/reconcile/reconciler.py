@@ -7,6 +7,11 @@ based on configurable timestamp_priority.
 US-059: Classification resolution by source priority. Encounter type,
 DRG, payer, and diagnoses are selected from the most trusted
 classification source.
+
+US-060: Auth reconciliation rules. Auth events validate encounters
+without anchoring them. Auth has lowest priority for timestamps and
+classification. Orphan auth signals (no ADT/claims) produce
+AUTH_WITHOUT_ADMIT flag.
 """
 
 from __future__ import annotations
@@ -239,6 +244,41 @@ class Reconciler:
                             seen_codes.add(code)
                             result.append(dx)
         return result
+
+    def reconcile_auth(
+        self, encounter: StitchedEncounter
+    ) -> list[str]:
+        """Check auth reconciliation rules and return flags.
+
+        Auth events are never used as anchors for encounter creation.
+        Auth has lowest priority for both timestamps and classification
+        (enforced by default priority configs).
+
+        If auth events exist with NO matching ADT or claims events in the
+        encounter, flag AUTH_WITHOUT_ADMIT.
+
+        Args:
+            encounter: A stitched encounter with events.
+
+        Returns:
+            List of flag strings (e.g., ["AUTH_WITHOUT_ADMIT"]).
+        """
+        flags: list[str] = []
+
+        has_auth = False
+        has_adt_or_claims = False
+
+        for event in encounter.events:
+            source_type = _extract_source_type(event.source_system)
+            if source_type == "auth":
+                has_auth = True
+            elif source_type in ("adt", "claims"):
+                has_adt_or_claims = True
+
+        if has_auth and not has_adt_or_claims:
+            flags.append("AUTH_WITHOUT_ADMIT")
+
+        return flags
 
     def _select_timestamp(
         self,

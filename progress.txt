@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Reconciler.reconcile_auth(encounter) returns list[str] of flags; AUTH_WITHOUT_ADMIT if encounter has auth events but no ADT/claims events
 - Reconciler.reconcile_classification(encounter) returns ReconciledClassification with encounter_type, drg, payer_id, principal_diagnosis, admitting_diagnosis, diagnosis_codes
 - ReconciledClassification dataclass: encounter_type (str), drg/payer_id/principal_diagnosis/admitting_diagnosis (str|None), diagnosis_codes (list[dict])
 - Classification priority defaults: claims=100, ADT=80, auth=40 (stored in _DEFAULT_CLASSIFICATION_PRIORITY)
@@ -1155,4 +1156,18 @@
   - Diagnosis code aggregation deduplicates by code value across sources, with higher-priority source codes appearing first
   - _resolve_field() is generic: takes field_name string and uses getattr to pick from events — reusable for any field
   - Test helper _make_event extended with drg, principal_diagnosis, diagnosis_codes, payer_id params for US-059 tests
+---
+
+## 2026-02-02 - US-060
+- What was implemented: Auth reconciliation rules — `reconcile_auth()` method on Reconciler class
+- Files changed:
+  - `asre/reconcile/reconciler.py` — added `reconcile_auth()` method
+  - `tests/unit/test_reconciler.py` — added `TestAuthReconciliationRules` test class (5 tests)
+  - `prd.json` — marked US-060 passes: true
+- **Learnings for future iterations:**
+  - Auth reconciliation is a flag-based check: presence of auth events without ADT/claims triggers AUTH_WITHOUT_ADMIT
+  - Reconciler.reconcile_auth(encounter) returns list[str] of flags (not a dataclass); AUTH_WITHOUT_ADMIT is the only flag for now
+  - Auth priority enforcement for timestamps/classification was already implemented in US-058/US-059 via default priority maps
+  - _extract_source_type() reused for detecting auth vs adt vs claims source types in reconcile_auth
+  - Auth events are "supporting signals" — they validate encounters but never anchor them (no new encounter creation from auth alone)
 ---
