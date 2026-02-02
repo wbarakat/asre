@@ -137,8 +137,10 @@ class PipelineRunner:
 
         stages["score"] = ScoreStage()
 
-        # Materialize (placeholder)
-        stages["materialize"] = _NoOpStage("materialize")
+        # Materialize
+        from asre.materialize.stage import MaterializeStage
+
+        stages["materialize"] = MaterializeStage()
 
         # Quality Check (placeholder)
         stages["quality_check"] = _NoOpStage("quality_check")
@@ -316,3 +318,9 @@ class PipelineRunner:
             score = self._stages.get("score")
             if hasattr(stage, "encounters") and hasattr(score, "encounters_in"):
                 score.encounters_in = stage.encounters  # type: ignore[union-attr]
+
+        elif stage_name == "score":
+            # Pass scored encounters to materialize
+            materialize = self._stages.get("materialize")
+            if hasattr(stage, "encounters") and hasattr(materialize, "encounters_in"):
+                materialize.encounters_in = stage.encounters  # type: ignore[union-attr]
