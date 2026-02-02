@@ -14,6 +14,7 @@
 - PostgresAdapter takes `config: dict[str, Any]` with keys: host, port, database, user, password, schema
 - SQLAlchemy `text()` required for raw SQL strings; `result.mappings()` returns dict rows
 - Watermark storage pattern: `asre_metadata` table with key-value columns, `ON CONFLICT` upsert
+- IngestQueryBuilder in `asre/ingest/query_builder.py` builds SQL queries per mode (full/incremental) with optional exclude filters
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -43,7 +44,7 @@
 ## Phase 3: Ingest Layer (US-018 to US-026)
 - [x] US-018: Define IngestAdapter interface (priority 18)
 - [x] US-019: Implement PostgreSQL adapter (priority 19)
-- [ ] US-020: Implement full mode ingest (priority 20)
+- [x] US-020: Implement full mode ingest (priority 20)
 - [ ] US-021: Implement incremental mode with lookback buffer (priority 21)
 - [ ] US-022: Implement source_record_id dedup on ingest (priority 22)
 - [ ] US-023: Implement exclude filters (priority 23)
@@ -404,4 +405,18 @@
   - Watermark storage uses `asre_metadata` table with `ON CONFLICT` upsert pattern
   - 17 tests covering: subclass verification (2), connection management (5), read_source (3), execute_ddl (1), write_records (2), watermark (2), connection URL (2)
   - Total test count: 231 (214 existing + 17 new)
+---
+
+## 2026-02-02 - US-020
+- Implemented: IngestQueryBuilder in `asre/ingest/query_builder.py` for building SQL queries based on ingest mode
+- Full mode: `SELECT * FROM <table>` with no watermark filtering
+- Exclude filters applied as `WHERE NOT (<exclude_expression>)` regardless of mode
+- `build_query()` returns the SQL string, `build_params()` returns params dict (empty for full mode)
+- Files changed: asre/ingest/query_builder.py (new), tests/unit/test_ingest_query_builder.py (new)
+- **Learnings for future iterations:**
+  - IngestQueryBuilder is a clean separation of query construction from adapter execution
+  - Exclude filters are literal SQL embedded in WHERE clause (not parameterized) since they come from trusted config
+  - Full mode params are always empty dict — incremental mode will add watermark param (US-021)
+  - 8 tests covering: SELECT * generation, no watermark in full mode, exclude filter as WHERE NOT, no WHERE without filter, empty params, adapter integration with mock
+  - Total test count: 239 (231 existing + 8 new)
 ---
