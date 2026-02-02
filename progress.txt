@@ -28,7 +28,7 @@
 - [x] US-011: Set up test infrastructure (priority 11)
 
 ## Phase 2: Configuration System (US-012 to US-017)
-- [ ] US-012: Define global config Pydantic schema (priority 12)
+- [x] US-012: Define global config Pydantic schema (priority 12)
 - [ ] US-013: Define source config Pydantic schema (priority 13)
 - [ ] US-014: Define facility alias config schema (priority 14)
 - [ ] US-015: Implement YAML config loader with env var substitution (priority 15)
@@ -276,4 +276,17 @@
   - Makefile targets: test, test-unit, test-integration, typecheck, lint, install, clean, check
   - 9 tests verify fixtures: 2 for sample_canonical_event, 2 for sample_encounter, 4 for sample_event_batch, 1 for syrupy
   - Total test count: 67 (58 existing + 9 new)
+---
+
+## 2026-02-02 - US-012
+- Implemented: Global config Pydantic schema in `asre/config/schema.py` with 11 Pydantic models
+- Models: CustomerConfig, WarehouseConfig, ScheduleConfig, EncounterStitchingConfig, DeduplicationConfig, ReconciliationConfig, EpisodeStitchingConfig, FacilityNormalizationConfig, ConfidenceScoringConfig, AlertingConfig, GlobalConfig
+- All fields have proper types and defaults matching SPEC §4.2 defaults
+- Files changed: asre/config/schema.py (new), tests/unit/test_config_schema.py (new)
+- **Learnings for future iterations:**
+  - Pydantic v2 `BaseModel` with `from __future__ import annotations` works well with `dict[str, Any]` type syntax
+  - Default mutable values (dicts, lists) in Pydantic models are safe — Pydantic deep-copies them per instance
+  - GlobalConfig requires customer + warehouse, all other sub-configs have defaults
+  - 28 tests covering: all 10 sub-configs individually + GlobalConfig with valid/invalid/override scenarios
+  - Total test count: 95 (67 existing + 28 new)
 ---
