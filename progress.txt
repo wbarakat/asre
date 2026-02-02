@@ -86,6 +86,10 @@
 - _handle_cancellation() called BEFORE discharge tracking in add_event() — order matters for CANCEL_DISCHARGE
 - Deterministic encounter_id: SHA-256 of `patient_key|facility_canonical_id|first_admit_source_record_id`; generated after stitching via `generate_encounter_id()`
 - StitchedEncounter._get_first_admit_source_record_id() finds first ADMIT-type event's source_record_id; falls back to first event if no admit
+- EncounterMetadata dataclass in `asre/stitch/metadata.py` holds derived metadata; `build_encounter_metadata(StitchedEncounter)` computes all fields
+- encounter_type derivation: StitchedEncounter.encounter_type "ed" maps to "ed_only" in metadata; None maps to "outpatient"
+- Admit/discharge timestamp derivation uses _ADMIT_EVENT_TYPES / _DISCHARGE_EVENT_TYPES sets (same as StitchedEncounter)
+- Source type detection for has_adt/has_claims/has_auth: prefix-based on source_system name (startswith "adt"/"claims"/"auth")
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -152,7 +156,7 @@
 - [x] US-048: Transfer chain detection (priority 48)
 - [x] US-049: Handle cancellation events (priority 49)
 - [x] US-050: Deterministic encounter IDs (priority 50)
-- [ ] US-051: Set encounter metadata (priority 51)
+- [x] US-051: Set encounter metadata (priority 51)
 - [ ] US-052: Implement StitchStage (priority 52)
 
 ## Phase 7: Deduplication (US-053 to US-057)
@@ -997,4 +1001,21 @@
   - Null facility uses empty string — two encounters at null facility with same patient+source_record_id get same ID
   - 9 tests covering: encounter_id exists (1), same inputs same ID (1), different source_record_id different ID (1), different patient_key different ID (1), different facility different ID (1), URL-safe hex string (1), first admit source_record_id used (1), null facility (1), stability across runs (1)
   - Total test count: 745 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-051
+- Implemented: EncounterMetadata dataclass and `build_encounter_metadata()` function in `asre/stitch/metadata.py`
+- Derives encounter_type (inpatient/observation/ed_only/outpatient), status, admit_ts, discharge_ts, los_hours, source_event_ids, source_systems, has_adt/has_claims/has_auth, obs_to_ip_conversion
+- encounter_type maps StitchedEncounter's "ed" -> "ed_only", None -> "outpatient"; inpatient/observation passed through
+- admit_ts: earliest admit/arrival event timestamp; discharge_ts: latest discharge event timestamp (null if open)
+- los_hours computed from (discharge_ts - admit_ts).total_seconds() / 3600
+- Source flags (has_adt/has_claims/has_auth) derived from source_system prefix matching
+- Files changed: asre/stitch/metadata.py (new), tests/unit/test_encounter_metadata.py (new)
+- **Learnings for future iterations:**
+  - EncounterMetadata is a separate dataclass from StitchedEncounter — keeps stitching and metadata derivation decoupled
+  - StitchedEncounter already tracks encounter_type and status; metadata builder maps "ed" to "ed_only" for the output schema
+  - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES are duplicated from StitchedEncounter as module-level constants — could be shared later
+  - Source type detection uses same prefix matching pattern as EncounterStitcher._extract_source_type()
+  - 23 tests covering: encounter_type (6), status (3), timestamps (6), source derivation (6), obs_to_ip (2)
+  - Total test count: 768 passed + 16 skipped (integration tests skip without Postgres)
 ---
