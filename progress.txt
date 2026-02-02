@@ -129,7 +129,7 @@
 
 ## Phase 6: Encounter Stitching (US-043 to US-052)
 - [x] US-043: Basic encounter stitching (priority 43)
-- [ ] US-044: Facility matching requirement for stitching (priority 44)
+- [x] US-044: Facility matching requirement for stitching (priority 44)
 - [ ] US-045: ED to IP merge (priority 45)
 - [ ] US-046: OBS to IP conversion (priority 46)
 - [ ] US-047: IP to IP as new encounter (priority 47)
@@ -865,4 +865,17 @@
   - Source type extraction is simple prefix matching — source_system names like "adt_vendor_x" -> "adt"
   - 20 tests covering: construction (3), patient partitioning (3), time sorting (1), tiebreaker (1), time window stitching (7), encounter output (5)
   - Total test count: 682 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-044
+- Implemented: Tests for facility matching requirement in stitching — all behavior was already implemented in US-043
+- The `facility_must_match` parameter, null facility handling, and facility comparison logic were all built into EncounterStitcher in US-043
+- Added 10 dedicated tests covering all acceptance criteria: facility_must_match=true (3), facility_must_match=false (4), null facility handling (3)
+- Files changed: tests/unit/test_facility_matching_stitching.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - US-043 already implemented facility_must_match as a forward-looking design decision — US-044 only needed test coverage
+  - When `facility_must_match=false`, null facilities stitch together (no facility check at all)
+  - When `facility_must_match=true`, null facilities are treated as non-matching — `None != None` is explicitly handled
+  - 10 tests covering: facility_must_match=true (3 — different facilities separate, same facility same, default value), facility_must_match=false (4 — different facilities same encounter, time window still applies, null facilities stitch, mixed null/set stitch), null handling (3 — null-null no stitch, set-null no stitch, null-set no stitch)
+  - Total test count: 692 passed + 16 skipped (integration tests skip without Postgres)
 ---
