@@ -15,6 +15,8 @@
 - SQLAlchemy `text()` required for raw SQL strings; `result.mappings()` returns dict rows
 - Watermark storage pattern: `asre_metadata` table with key-value columns, `ON CONFLICT` upsert
 - IngestQueryBuilder in `asre/ingest/query_builder.py` builds SQL queries per mode (full/incremental) with optional exclude filters
+- `resolve_lookback_buffer_hours(lookback_config, source_type)` in query_builder.py parses "24h"/"3d" format strings and falls back to "default" key
+- IngestQueryBuilder accepts optional `watermark` (datetime|None) and `lookback_buffer_hours` (int) params for incremental mode
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -45,7 +47,7 @@
 - [x] US-018: Define IngestAdapter interface (priority 18)
 - [x] US-019: Implement PostgreSQL adapter (priority 19)
 - [x] US-020: Implement full mode ingest (priority 20)
-- [ ] US-021: Implement incremental mode with lookback buffer (priority 21)
+- [x] US-021: Implement incremental mode with lookback buffer (priority 21)
 - [ ] US-022: Implement source_record_id dedup on ingest (priority 22)
 - [ ] US-023: Implement exclude filters (priority 23)
 - [ ] US-024: Implement watermark management (priority 24)
@@ -419,4 +421,21 @@
   - Full mode params are always empty dict — incremental mode will add watermark param (US-021)
   - 8 tests covering: SELECT * generation, no watermark in full mode, exclude filter as WHERE NOT, no WHERE without filter, empty params, adapter integration with mock
   - Total test count: 239 (231 existing + 8 new)
+---
+
+## 2026-02-02 - US-021
+- Implemented: Incremental mode with lookback buffer in `asre/ingest/query_builder.py`
+- Added `watermark` (datetime|None) and `lookback_buffer_hours` (int) params to IngestQueryBuilder
+- Incremental mode adds `WHERE incremental_key > :watermark` with watermark adjusted back by lookback buffer hours
+- If no watermark exists (first run), no watermark filter applied (behaves like full mode)
+- Added `resolve_lookback_buffer_hours(lookback_config, source_type)` helper for parsing "24h"/"3d" format and source-type-specific fallback
+- Full mode unchanged — ignores watermark even if provided
+- Files changed: asre/ingest/query_builder.py (modified), tests/unit/test_incremental_ingest.py (new)
+- **Learnings for future iterations:**
+  - IngestQueryBuilder's `_should_apply_watermark()` method cleanly separates the mode + watermark-presence check
+  - Lookback config uses string format "24h" or "3d" — `resolve_lookback_buffer_hours` handles both
+  - `timedelta(hours=N)` for adjusting watermark back by lookback buffer
+  - Full mode backward compatibility: new optional params default to None/24 so existing code doesn't break
+  - 15 tests: 7 incremental query tests, 6 lookback buffer parsing tests, 2 full mode backward compatibility tests
+  - Total test count: 254 (239 existing + 15 new)
 ---
