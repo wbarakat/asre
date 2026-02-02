@@ -1,0 +1,29 @@
+name: auth_portal
+type: auth
+
+source:
+  table: raw_authorizations
+  incremental_key: updated_at
+
+field_mappings:
+  patient_key: member_id
+  event_ts: auth_date
+  source_record_id: auth_id
+  facility_raw: servicing_facility
+  payer_id: payer_code
+
+event_type_rules:
+  source_field: auth_type
+  mappings:
+    INITIAL: AUTH_REQUESTED
+    APPROVED: AUTH_APPROVED
+    DENIED: AUTH_DENIED
+    MODIFIED: AUTH_MODIFIED
+
+auth_status_map:
+  source_field: auth_status_code
+  mappings:
+    A: approved
+    D: denied
+    P: pending
+    M: modified

@@ -1,0 +1,129 @@
+customer:
+  customer_id: test_customer
+  customer_name: Test Health System
+
+warehouse:
+  type: postgres
+  connection:
+    host: "${WAREHOUSE_HOST}"
+    port: "${WAREHOUSE_PORT}"
+    database: "${WAREHOUSE_DATABASE}"
+    user: "${WAREHOUSE_USER}"
+    password: "${WAREHOUSE_PASSWORD}"
+    schema: "${WAREHOUSE_SCHEMA}"
+
+schedule:
+  mode: incremental
+  lookback_buffer:
+    default: "24h"
+    adt: "24h"
+    claims: "72h"
+    auth: "24h"
+
+encounter_stitching:
+  time_window_hours: 48
+  facility_must_match: true
+  patient_class_transitions:
+    - from: ed
+      to: inpatient
+      action: merge
+    - from: observation
+      to: inpatient
+      action: merge
+    - from: inpatient
+      to: inpatient
+      action: new_encounter
+  same_timestamp_tiebreaker:
+    - claims
+    - adt
+    - auth
+
+deduplication:
+  match_fields:
+    - patient_key
+    - event_type
+    - facility_canonical_id
+  time_tolerance_minutes: 30
+
+reconciliation:
+  timestamp_priority:
+    adt: 100
+    claims: 80
+    auth: 40
+  classification_priority:
+    claims: 100
+    adt: 80
+    auth: 40
+  timestamp_tolerance_hours: 24
+
+episode_stitching:
+  readmission_window_days: 30
+  post_acute_linkage_days: 14
+  planned_return_days: 90
+  ed_bounceback_days: 7
+
+facility_normalization:
+  fuzzy_threshold: 0.85
+  abbreviations:
+    MED CTR: MEDICAL CENTER
+    MED: MEDICAL
+    CTR: CENTER
+    HOSP: HOSPITAL
+    HSP: HOSPITAL
+    HLTH: HEALTH
+    SYS: SYSTEM
+    REHAB: REHABILITATION
+    PSYCH: PSYCHIATRIC
+    COMM: COMMUNITY
+    GENL: GENERAL
+    GEN: GENERAL
+    REGL: REGIONAL
+    REG: REGIONAL
+    UNIV: UNIVERSITY
+    ST: SAINT
+    MT: MOUNT
+
+confidence_scoring:
+  signal_weights:
+    HAS_CLAIMS: 30
+    HAS_ADT_ADMIT: 20
+    HAS_ADT_DISCHARGE: 10
+    HAS_AUTH: 10
+    FACILITY_RESOLVED: 5
+    TIMESTAMPS_CONSISTENT: 15
+    PATIENT_CLASS_CONSISTENT: 10
+  penalties:
+    MISSING_DISCHARGE: -0.15
+    ORPHAN_DISCHARGE: -0.20
+    TIMESTAMP_MISMATCH: -0.10
+    CLAIMS_ONLY_ENCOUNTER: -0.10
+    STALE_OPEN_ENCOUNTER: -0.20
+    DUPLICATE_DETECTED: -0.05
+    FACILITY_UNRESOLVED: -0.10
+    AUTH_WITHOUT_ADMIT: -0.05
+    CANCELLED_AND_REOPENED: -0.05
+  stale_encounter_thresholds:
+    acute: 30
+    ed_standalone: 3
+    ltach: 90
+    snf: 120
+    rehab: 60
+    psych: 90
+    default: 30
+
+alerting:
+  webhook_urls:
+    - "${ALERT_WEBHOOK_URL}"
+  thresholds:
+    duplicate_rate_warn: 0.05
+    duplicate_rate_fail: 0.15
+    missing_discharge_rate_warn: 0.10
+    missing_discharge_rate_fail: 0.25
+    reconciliation_mismatch_rate_warn: 0.10
+    reconciliation_mismatch_rate_fail: 0.25
+    low_confidence_rate_warn: 0.15
+    low_confidence_rate_fail: 0.30
+    facility_unresolved_rate_warn: 0.05
+    facility_unresolved_rate_fail: 0.15
+    failed_event_rate_warn: 0.02
+    failed_event_rate_fail: 0.05

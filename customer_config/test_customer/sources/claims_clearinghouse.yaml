@@ -1,0 +1,48 @@
+name: claims_clearinghouse
+type: claims
+
+source:
+  table: raw_claims
+  incremental_key: received_date
+
+field_mappings:
+  patient_key: member_id
+  event_ts: admission_date
+  source_record_id: claim_id
+  facility_raw: facility_name
+  payer_id: payer_code
+  drg: drg_code
+  principal_diagnosis: primary_dx
+  diagnosis_codes: all_diagnosis_codes
+  npi: billing_npi
+
+event_type_rules:
+  source_field: claim_type
+  mappings:
+    IP: CLAIM_ADMIT
+    OP: CLAIM_OUTPATIENT
+    ED: CLAIM_ED
+
+paired_events:
+  admit:
+    event_ts: admission_date
+    event_type: CLAIM_ADMIT
+  discharge:
+    event_ts: discharge_date
+    event_type: CLAIM_DISCHARGE
+
+patient_class_rules:
+  conditions:
+    - when: "bill_type_code LIKE '11%'"
+      patient_class: inpatient
+    - when: "bill_type_code LIKE '12%'"
+      patient_class: inpatient
+    - when: "bill_type_code LIKE '13%'"
+      patient_class: outpatient
+    - when: "bill_type_code LIKE '14%'"
+      patient_class: outpatient
+    - when: "bill_type_code LIKE '85%'"
+      patient_class: ed
+
+filters:
+  exclude: "claim_status = 'DENIED'"

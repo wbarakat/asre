@@ -1,0 +1,44 @@
+facilities:
+  - canonical_id: FAC_001
+    canonical_name: St. Mary's Medical Center
+    npi: "1234567890"
+    ccn: "010001"
+    facility_type: acute
+    aliases:
+      - ST MARYS MEDICAL CTR
+      - ST MARY MED CTR
+      - SAINT MARYS MEDICAL CENTER
+      - ST MARYS EAST CAMPUS
+
+  - canonical_id: FAC_002
+    canonical_name: Memorial Regional Hospital
+    npi: "2345678901"
+    ccn: "010002"
+    facility_type: acute
+    aliases:
+      - MEMORIAL REGIONAL HOSP
+      - MEMORIAL REGIONAL
+      - MRH
+
+  - canonical_id: FAC_003
+    canonical_name: Good Samaritan Hospital
+    npi: "3456789012"
+    facility_type: acute
+    aliases:
+      - GOOD SAMARITAN HOSP
+      - GOOD SAM HOSPITAL
+
+  - canonical_id: FAC_004
+    canonical_name: Sunrise Skilled Nursing Facility
+    facility_type: snf
+    aliases:
+      - SUNRISE SNF
+      - SUNRISE SKILLED NURSING
+
+  - canonical_id: FAC_005
+    canonical_name: Valley Rehabilitation Center
+    npi: "5678901234"
+    facility_type: rehab
+    aliases:
+      - VALLEY REHAB CTR
+      - VALLEY REHABILITATION

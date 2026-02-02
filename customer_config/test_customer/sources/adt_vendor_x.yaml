@@ -1,0 +1,42 @@
+name: adt_vendor_x
+type: adt
+
+source:
+  table: raw_adt_events
+  incremental_key: message_ts
+
+field_mappings:
+  patient_key: patient_mrn
+  event_ts: message_ts
+  source_record_id: message_control_id
+  facility_raw: sending_facility
+  patient_class: patient_class
+  npi: facility_npi
+
+event_type_rules:
+  source_field: hl7_event
+  mappings:
+    A01: ADMIT
+    A02: TRANSFER_IN
+    A03: DISCHARGE
+    A04: REGISTRATION
+    A05: PRE_ADMIT
+    A06: OBS_TO_IP
+    A07: TRANSFER_OUT
+    A11: CANCEL_ADMIT
+    A12: CANCEL_TRANSFER
+    A13: CANCEL_DISCHARGE
+  conditional_mappings:
+    - when: "hl7_event == 'A01' AND patient_class == 'E'"
+      event_type: ED_ARRIVAL
+    - when: "hl7_event == 'A01' AND patient_class == 'O'"
+      event_type: OBS_START
+    - when: "hl7_event == 'A03' AND patient_class == 'E'"
+      event_type: ED_DEPARTURE
+    - when: "hl7_event == 'A03' AND patient_class == 'O'"
+      event_type: OBS_END
+  admit_flag_expression: "event_type IN ('ADMIT', 'ED_ARRIVAL', 'OBS_START', 'TRANSFER_IN')"
+  discharge_flag_expression: "event_type IN ('DISCHARGE', 'ED_DEPARTURE', 'OBS_END', 'TRANSFER_OUT')"
+
+filters:
+  exclude: "hl7_event IN ('A08', 'A31')"
