@@ -1,7 +1,9 @@
 ## Codebase Patterns
 - ConfidenceScorer in `asre/score/confidence_scorer.py`: evaluate_signals(enc) returns dict[str, bool]; compute_score(enc) returns float 0-1
 - ConfidenceScorer signal evaluation: HAS_CLAIMS/HAS_ADT_ADMIT/HAS_ADT_DISCHARGE/HAS_AUTH from source_system prefix; FACILITY_RESOLVED from facility_canonical_id not None; TIMESTAMPS_CONSISTENT from no TIMESTAMP_MISMATCH flag; PATIENT_CLASS_CONSISTENT from <=1 distinct patient_class values
-- ConfidenceScorer.max_score = sum of all signal weights (default 100); score = active_weight_sum / max_score
+- ConfidenceScorer.max_score = sum of all signal weights (default 100); score = active_weight_sum / max_score, then penalties subtracted, floored at 0.0
+- ConfidenceScorer accepts optional `penalty_weights: dict[str, float]`; defaults in `_DEFAULT_PENALTY_WEIGHTS` (9 penalties)
+- TIMESTAMP_MISMATCH is dual-purpose: disables TIMESTAMPS_CONSISTENT signal AND applies -0.10 penalty; tests must account for both effects
 - _extract_source_type() pattern reused across modules: prefix-based (claims/auth/adt) from source_system name
 - Reconciler flag methods: flag_missing_discharge(enc, now, open_threshold_hours=48), flag_orphan_discharge(enc), flag_claims_only(enc), flag_adt_only(enc, now, claims_lag_days=45) — all return list[str]
 - flag_missing_discharge checks has_discharge on StitchedEncounter, then verifies admit-type events exist and encounter open > threshold
@@ -1250,4 +1252,16 @@
   - PATIENT_CLASS_CONSISTENT checks distinct non-null patient_class values across events (<=1 = consistent)
   - Test data must carefully control ALL signals — easy to accidentally activate PATIENT_CLASS_CONSISTENT or TIMESTAMPS_CONSISTENT
   - ReconciledEncounter delegates attribute access to StitchedEncounter via __getattr__
+---
+
+## 2026-02-02 - US-065
+- What was implemented: Penalty application to confidence score. Added `_DEFAULT_PENALTY_WEIGHTS` dict with 9 penalties and their default values. Extended `ConfidenceScorer.__init__` to accept optional `penalty_weights` param. Modified `compute_score()` to subtract penalties from base score, floored at 0.0. Added `_compute_penalty()` helper method.
+- Files changed:
+  - `asre/score/confidence_scorer.py` — added penalty weights, penalty_weights param, penalty computation logic
+  - `tests/unit/test_confidence_scorer.py` — added `TestPenaltyApplication` class with 5 tests; updated existing US-064 tests to account for TIMESTAMP_MISMATCH now being both a signal disabler and a penalty
+- **Learnings for future iterations:**
+  - TIMESTAMP_MISMATCH serves dual purpose: (1) disables TIMESTAMPS_CONSISTENT signal in evaluate_signals, (2) applies -0.10 penalty in compute_score. Tests using TIMESTAMP_MISMATCH flags must account for both effects.
+  - When adding penalties that interact with existing signal flags, existing tests will need score expectation updates since the scoring formula changes.
+  - Use `pytest.approx()` for float comparisons involving subtraction (floating point precision issues).
+  - Pre-existing mypy errors (12 in 6 files) exist in the repo from earlier stories; new code should be verified independently with targeted mypy checks.
 ---

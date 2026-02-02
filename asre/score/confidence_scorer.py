@@ -27,6 +27,18 @@ _DEFAULT_SIGNAL_WEIGHTS: dict[str, int] = {
     "PATIENT_CLASS_CONSISTENT": 10,
 }
 
+_DEFAULT_PENALTY_WEIGHTS: dict[str, float] = {
+    "MISSING_DISCHARGE": -0.15,
+    "ORPHAN_DISCHARGE": -0.20,
+    "TIMESTAMP_MISMATCH": -0.10,
+    "CLAIMS_ONLY_ENCOUNTER": -0.10,
+    "STALE_OPEN_ENCOUNTER": -0.20,
+    "DUPLICATE_DETECTED": -0.05,
+    "FACILITY_UNRESOLVED": -0.10,
+    "AUTH_WITHOUT_ADMIT": -0.05,
+    "CANCELLED_AND_REOPENED": -0.05,
+}
+
 _ADMIT_EVENT_TYPES: set[str] = {
     "ADMIT", "CLAIM_ADMIT", "ED_ARRIVAL", "OBS_START",
 }
@@ -41,8 +53,10 @@ class ConfidenceScorer:
     def __init__(
         self,
         signal_weights: dict[str, int] | None = None,
+        penalty_weights: dict[str, float] | None = None,
     ) -> None:
         self.signal_weights = signal_weights or dict(_DEFAULT_SIGNAL_WEIGHTS)
+        self.penalty_weights = penalty_weights or dict(_DEFAULT_PENALTY_WEIGHTS)
         self.max_score = sum(self.signal_weights.values())
 
     def evaluate_signals(self, encounter: ReconciledEncounter) -> dict[str, bool]:
@@ -89,7 +103,7 @@ class ConfidenceScorer:
         }
 
     def compute_score(self, encounter: ReconciledEncounter) -> float:
-        """Compute the base confidence score normalized to [0, 1]."""
+        """Compute the confidence score: base score minus penalties, floored at 0.0."""
         if self.max_score == 0:
             return 0.0
 
@@ -99,7 +113,20 @@ class ConfidenceScorer:
             for signal, active in signals.items()
             if active
         )
-        return raw_score / self.max_score
+        base_score = raw_score / self.max_score
+
+        # Apply penalties from confidence_flags
+        penalty = self._compute_penalty(encounter)
+        return max(0.0, base_score + penalty)
+
+    def _compute_penalty(self, encounter: ReconciledEncounter) -> float:
+        """Compute total penalty from encounter's confidence_flags."""
+        flags = encounter.confidence_flags
+        total = 0.0
+        for flag in flags:
+            if flag in self.penalty_weights:
+                total += self.penalty_weights[flag]
+        return total
 
     @staticmethod
     def _extract_source_type(source_system: str) -> str:

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from asre.models.canonical_event import CanonicalEvent
 from asre.reconcile.stage import ReconciledEncounter
 from asre.score.confidence_scorer import ConfidenceScorer
@@ -122,21 +124,12 @@ class TestConfidenceScorer:
 
         assert score == 1.0
 
-    def test_only_has_claims_produces_030(self) -> None:
-        """Only HAS_CLAIMS signal -> score = 30/100 = 0.30."""
-        events = [
-            _make_event(
-                event_type="CLAIM_ADMIT",
-                source_system="claims_clearinghouse",
-                admit_flag=True,
-                facility_canonical_id=None,  # unresolved -> no FACILITY_RESOLVED
-                patient_class=None,  # no patient_class -> empty set -> consistent (<=1)
-            ),
-        ]
-        enc = _make_encounter(events, facility_canonical_id=None)
-        # TIMESTAMP_MISMATCH -> no TIMESTAMPS_CONSISTENT
-        # patient_class=None means patient_classes set is empty (<=1) -> consistent
-        # So we need to also break PATIENT_CLASS_CONSISTENT. Use two different classes.
+    def test_only_has_claims_base_score_030(self) -> None:
+        """Only HAS_CLAIMS signal -> base score = 30/100 = 0.30.
+
+        TIMESTAMP_MISMATCH disables TIMESTAMPS_CONSISTENT and also applies
+        -0.10 penalty (US-065), so final score = 0.30 - 0.10 = 0.20.
+        """
         events2 = [
             _make_event(
                 event_type="CLAIM_ADMIT",
@@ -159,10 +152,15 @@ class TestConfidenceScorer:
         scorer = ConfidenceScorer()
         score = scorer.compute_score(rec)
 
-        assert score == 30 / 100
+        # Base 0.30 - TIMESTAMP_MISMATCH penalty 0.10 = 0.20
+        assert score == pytest.approx(0.20)
 
-    def test_has_claims_and_adt_admit_produces_050(self) -> None:
-        """HAS_CLAIMS + HAS_ADT_ADMIT -> score = 50/100 = 0.50."""
+    def test_has_claims_and_adt_admit_base_score_050(self) -> None:
+        """HAS_CLAIMS + HAS_ADT_ADMIT -> base score = 50/100 = 0.50.
+
+        TIMESTAMP_MISMATCH also applies -0.10 penalty (US-065),
+        so final score = 0.50 - 0.10 = 0.40.
+        """
         events = [
             _make_event(
                 event_type="ADMIT",
@@ -180,18 +178,18 @@ class TestConfidenceScorer:
             ),
         ]
         enc = _make_encounter(events, facility_canonical_id=None)
-        # TIMESTAMP_MISMATCH flag means timestamps not consistent
         rec = _make_reconciled(enc, flags=["TIMESTAMP_MISMATCH"])
 
         scorer = ConfidenceScorer()
         score = scorer.compute_score(rec)
 
-        assert score == 50 / 100
+        # Base 0.50 - TIMESTAMP_MISMATCH penalty 0.10 = 0.40
+        assert score == 0.40
 
-    def test_custom_weights(self) -> None:
+    def test_custom_signal_weights(self) -> None:
         """Custom signal weights are respected."""
         # Only HAS_CLAIMS active: no ADT, no auth, unresolved facility,
-        # TIMESTAMP_MISMATCH flag, inconsistent patient_class
+        # inconsistent patient_class. No penalty flags.
         events = [
             _make_event(
                 event_type="CLAIM_ADMIT",
@@ -209,7 +207,9 @@ class TestConfidenceScorer:
             ),
         ]
         enc = _make_encounter(events, facility_canonical_id=None)
-        rec = _make_reconciled(enc, flags=["TIMESTAMP_MISMATCH"])
+        # No TIMESTAMP_MISMATCH so TIMESTAMPS_CONSISTENT=True
+        # But we want only HAS_CLAIMS active. Use flags=[] and adjust weights.
+        rec = _make_reconciled(enc, flags=[])
 
         custom_weights = {
             "HAS_CLAIMS": 50,
@@ -223,7 +223,8 @@ class TestConfidenceScorer:
         scorer = ConfidenceScorer(signal_weights=custom_weights)
         score = scorer.compute_score(rec)
 
-        assert score == 50 / 100
+        # HAS_CLAIMS(50) + TIMESTAMPS_CONSISTENT(10) = 60/100 = 0.60
+        assert score == 60 / 100
 
     def test_max_raw_score_is_sum_of_weights(self) -> None:
         """Maximum raw score equals sum of all weights, normalized to 1.0."""
@@ -282,3 +283,196 @@ class TestConfidenceScorer:
         score = scorer.compute_score(rec)
 
         assert score == 0.0
+
+
+class TestPenaltyApplication:
+    """Tests for US-065: Penalty application to confidence score."""
+
+    def test_missing_discharge_penalty(self) -> None:
+        """MISSING_DISCHARGE penalty (-0.15) reduces score from base.
+
+        PRD: base score 0.50 with MISSING_DISCHARGE produces 0.35.
+        We construct a base of 0.50 using custom signal weights.
+        """
+        # HAS_CLAIMS + HAS_ADT_ADMIT active, nothing else
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="observation",  # inconsistent
+            ),
+        ]
+        enc = _make_encounter(events, facility_canonical_id=None)
+        # MISSING_DISCHARGE is the only penalty flag.
+        # No TIMESTAMP_MISMATCH -> TIMESTAMPS_CONSISTENT=True
+        # But we want base=0.50. Active signals with defaults:
+        # HAS_CLAIMS(30)+HAS_ADT_ADMIT(20)+TIMESTAMPS_CONSISTENT(15)=65/100=0.65
+        # Use custom weights: HAS_CLAIMS=25, HAS_ADT_ADMIT=25, rest=0 active besides these two
+        custom_signals = {
+            "HAS_CLAIMS": 25,
+            "HAS_ADT_ADMIT": 25,
+            "HAS_ADT_DISCHARGE": 25,
+            "HAS_AUTH": 25,
+            "FACILITY_RESOLVED": 0,
+            "TIMESTAMPS_CONSISTENT": 0,
+            "PATIENT_CLASS_CONSISTENT": 0,
+        }
+        rec = _make_reconciled(enc, flags=["MISSING_DISCHARGE"])
+        scorer = ConfidenceScorer(signal_weights=custom_signals)
+        score = scorer.compute_score(rec)
+
+        # Base: (25+25) / 100 = 0.50
+        # Penalty: MISSING_DISCHARGE = -0.15
+        # Final: 0.50 - 0.15 = 0.35
+        assert score == 0.35
+
+    def test_penalties_floor_at_zero(self) -> None:
+        """Base score 0.20 with penalties totaling 0.30 produces 0.0 (floored)."""
+        # Only HAS_ADT_ADMIT (20) = 20/100 = 0.20 base
+        # ORPHAN_DISCHARGE (-0.20) + FACILITY_UNRESOLVED (-0.10) = -0.30
+        # 0.20 - 0.30 = -0.10 -> floored to 0.0
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="observation",
+            ),
+        ]
+        enc = _make_encounter(events, facility_canonical_id=None)
+        rec = _make_reconciled(
+            enc,
+            flags=["TIMESTAMP_MISMATCH", "ORPHAN_DISCHARGE", "FACILITY_UNRESOLVED"],
+        )
+
+        scorer = ConfidenceScorer()
+        score = scorer.compute_score(rec)
+
+        assert score == 0.0
+
+    def test_all_penalties_applied(self) -> None:
+        """All 9 penalty types reduce the score."""
+        # All signals present -> base 1.0
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="DISCHARGE",
+                source_system="adt_vendor_x",
+                discharge_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="AUTH_APPROVED",
+                source_system="auth_portal",
+            ),
+        ]
+        enc = _make_encounter(events, has_discharge=True, status="closed")
+
+        all_penalties = [
+            "MISSING_DISCHARGE",        # -0.15
+            "ORPHAN_DISCHARGE",         # -0.20
+            "TIMESTAMP_MISMATCH",       # -0.10
+            "CLAIMS_ONLY_ENCOUNTER",    # -0.10
+            "STALE_OPEN_ENCOUNTER",     # -0.20
+            "DUPLICATE_DETECTED",       # -0.05
+            "FACILITY_UNRESOLVED",      # -0.10
+            "AUTH_WITHOUT_ADMIT",       # -0.05
+            "CANCELLED_AND_REOPENED",   # -0.05
+        ]
+        rec = _make_reconciled(enc, flags=all_penalties)
+
+        scorer = ConfidenceScorer()
+        score = scorer.compute_score(rec)
+
+        # Base: 1.0 (all signals except TIMESTAMPS_CONSISTENT due to TIMESTAMP_MISMATCH)
+        # Actually TIMESTAMP_MISMATCH in flags means TIMESTAMPS_CONSISTENT = False
+        # Base: (30+20+10+10+5+0+10)/100 = 85/100 = 0.85
+        # Penalties: 0.15+0.20+0.10+0.10+0.20+0.05+0.10+0.05+0.05 = 1.0
+        # 0.85 - 1.0 = -0.15 -> floored to 0.0
+        assert score == 0.0
+
+    def test_no_penalties_score_unchanged(self) -> None:
+        """No penalty flags means base score is unchanged."""
+        events = [
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="CLAIM_DISCHARGE",
+                source_system="claims_clearinghouse",
+                discharge_flag=True,
+                facility_canonical_id=None,
+                patient_class="observation",
+            ),
+        ]
+        enc = _make_encounter(events, facility_canonical_id=None)
+        # No flags at all -> TIMESTAMPS_CONSISTENT=True, no penalties
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        score = scorer.compute_score(rec)
+
+        # HAS_CLAIMS(30) + TIMESTAMPS_CONSISTENT(15) = 45/100 = 0.45
+        # No penalty flags, score unchanged
+        assert score == 0.45
+
+    def test_custom_penalty_weights(self) -> None:
+        """Custom penalty weights are respected."""
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="inpatient",
+            ),
+            _make_event(
+                event_type="CLAIM_ADMIT",
+                source_system="claims_clearinghouse",
+                admit_flag=True,
+                facility_canonical_id=None,
+                patient_class="observation",
+            ),
+        ]
+        enc = _make_encounter(events, facility_canonical_id=None)
+        rec = _make_reconciled(enc, flags=["TIMESTAMP_MISMATCH", "MISSING_DISCHARGE"])
+
+        # Base: HAS_CLAIMS(30) + HAS_ADT_ADMIT(20) = 0.50
+        # Custom penalty for MISSING_DISCHARGE = -0.25
+        custom_penalties = {"MISSING_DISCHARGE": -0.25}
+        scorer = ConfidenceScorer(penalty_weights=custom_penalties)
+        score = scorer.compute_score(rec)
+
+        assert score == 0.25
