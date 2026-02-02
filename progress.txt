@@ -58,6 +58,11 @@
 - FacilityMatcher.resolve_or_create() cascades: exact -> NPI -> CCN -> fuzzy -> create new; new facilities get FAC_{uuid} IDs and FACILITY_NEW_UNREVIEWED flag
 - MatchResult has `flags: list[str]` field (default empty list) for carrying metadata like FACILITY_NEW_UNREVIEWED
 - New runtime facilities are added to both _alias_index and _fuzzy_candidates so subsequent events reuse them (no duplicates)
+- FacilityRegistry in `asre/facility/registry.py`: primary store is dict[canonical_id, FacilityRecord] with alias/NPI/CCN indexes
+- FacilityRecord dataclass: canonical_id, canonical_name, facility_type, npi, ccn, aliases, flags — has to_dict() for persistence
+- Registry `persist(adapter)` serializes aliases/flags to JSON strings before calling adapter.write_records("asre_facility_registry", records)
+- Registry `add_alias(canonical_id, alias)` updates both the record's aliases list and the alias_index; raises ValueError for unknown canonical_id
+- For mypy strict: use `count: int = adapter.write_records(...)` to avoid `Returning Any` when adapter typed as `Any`
 
 # ASRE Progress Tracker
 # Generated from prd.json - 108 User Stories
@@ -111,7 +116,7 @@
 - [x] US-037: Implement NPI/CCN matching (priority 37)
 - [x] US-038: Implement fuzzy matching (priority 38)
 - [x] US-039: Handle unresolved facilities (priority 39)
-- [ ] US-040: Implement facility registry (priority 40)
+- [x] US-040: Implement facility registry (priority 40)
 - [ ] US-041: Implement FacilityNormalizationStage (priority 41)
 - [ ] US-042: Add facility CLI commands (priority 42)
 
@@ -779,4 +784,23 @@
   - Second call with same normalized name hits `_alias_index` and returns match_type='exact' (not 'new')
   - 19 tests covering: creation (5), reuse (4), alias indexing (2), cascade (5), edge cases (3)
   - Total test count: 605 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-040
+- Implemented: FacilityRegistry class in `asre/facility/registry.py` with FacilityRecord dataclass
+- FacilityRecord holds: canonical_id, canonical_name, facility_type, npi, ccn, aliases, flags — with to_dict() serialization
+- FacilityRegistry loads initial data from FacilityAliasConfig into primary store (dict[canonical_id, FacilityRecord])
+- In-memory indexes: normalized alias -> canonical_id, NPI -> canonical_id, CCN -> canonical_id
+- Lookup methods: lookup_by_alias (normalizes input), lookup_by_npi, lookup_by_ccn
+- Runtime additions: add_facility() creates+indexes new record, add_alias() adds alias to existing facility
+- Persistence: to_records() serializes all facilities, persist(adapter) writes to asre_facility_registry table
+- Files changed: asre/facility/registry.py (new), tests/unit/test_facility_registry.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - FacilityRegistry is separate from FacilityMatcher — registry stores/indexes facilities, matcher does resolution cascade
+  - FacilityRecord tracks facility_type for downstream stale encounter thresholds (US-067)
+  - For persist(), aliases and flags lists must be JSON-serialized before writing (database stores as TEXT/VARCHAR)
+  - `adapter` typed as `Any` in persist() to avoid circular import with IngestAdapter — use explicit `count: int` annotation on return value for mypy strict
+  - add_alias raises ValueError for unknown canonical_id — fail-fast on programming errors
+  - 30 tests covering: construction (4), alias lookup (5), NPI lookup (5), CCN lookup (3), add facility (7), persistence (4), FacilityRecord (2)
+  - Total test count: 635 passed + 16 skipped (integration tests skip without Postgres)
 ---
