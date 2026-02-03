@@ -1664,3 +1664,12 @@
   - 4 new tests: within window sets flag, outside window no flag, no post-acute encounters flag false, chain with both readmission and post-acute flags
   - Total test count: 1178 passed (1174 existing + 4 new)
 ---
+## 2026-02-02 - US-089
+- What was implemented: ED bounce-back linkage verification — added acceptance-criteria-specific tests confirming ED visits within 7 days of prior discharge link to the same episode, and ED visits beyond 7 days create separate episodes
+- Implementation was already completed as part of US-086 (`_is_ed_bounceback_link` method in `EpisodeStitcher`)
+- Files changed: tests/unit/test_episode_stitcher.py (2 new tests added), prd.json (updated)
+- **Learnings for future iterations:**
+  - ED bounce-back linkage checks `encounter_type == "ed_only"` on the current encounter and gap <= ed_bounceback_days (default 7)
+  - When testing "outside window separate" for ED bounceback, ensure other linkage rules don't fire: use non-acute prior + different facility to prevent readmission and planned-return rules from linking
+  - Total test count: 1180 passed (1178 existing + 2 new)
+---
