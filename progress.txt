@@ -1567,3 +1567,17 @@
   - The PRD lists "11 metrics" but the acceptance criteria actually lists 12 metric names (events_ingested, encounters_created, encounters_updated are separate)
   - Total test count: 1090 passed (unit tests)
 ---
+## 2026-02-02 - US-082
+- What was implemented: Threshold evaluation in QualityMetricComputer — `evaluate_thresholds()` method that compares each metric against warn/fail thresholds from AlertingConfig.thresholds, producing pass/warn/fail status. Updated `to_records()` to accept optional statuses dict and include status field on each metric row.
+- Files changed:
+  - `asre/quality/metrics.py` — added `evaluate_thresholds()` method, updated `to_records()` signature with optional `statuses` param
+  - `tests/unit/test_quality_metrics.py` — added TestThresholdEvaluation (8 tests) and TestToRecordsWithStatus (2 tests)
+  - `prd.json` — marked US-082 as passes: true
+- **Learnings for future iterations:**
+  - Threshold keys follow `<metric_name>_warn` and `<metric_name>_fail` naming convention in AlertingConfig.thresholds
+  - Metrics without configured thresholds default to "pass" status
+  - Status at exact threshold boundary: warn threshold is inclusive (>=), fail threshold is inclusive (>=)
+  - Fail check happens before warn check — a metric at/above fail threshold is "fail", not "warn"
+  - to_records() is backwards-compatible: statuses param is optional, old callers get records without status field
+  - Total test count: 1100 passed (unit tests)
+---
