@@ -1,8 +1,9 @@
-"""Tests for QualityMetricComputer (US-081).
+"""Tests for QualityMetricComputer (US-081, US-082).
 
 Tests the quality metric computation class that computes all 11 metrics
 from SPEC section 8.2 after each pipeline run. Metrics are computed from
 scored encounters and stage metrics, then written to asre_quality_metrics table.
+Also tests threshold evaluation (US-082) that determines pass/warn/fail status.
 """
 
 from __future__ import annotations
@@ -568,3 +569,165 @@ class TestQualityMetricComputerToRecords:
         record_map = {r["metric_name"]: r["metric_value"] for r in records}
         for key, value in metrics.items():
             assert record_map[key] == pytest.approx(value)
+
+
+class TestThresholdEvaluation:
+    """Test evaluate_thresholds() (US-082).
+
+    Each metric is compared against warn and fail thresholds from
+    AlertingConfig.thresholds. Status: pass (below warn), warn (between
+    warn and fail), fail (at or above fail).
+    """
+
+    def test_metric_below_warn_is_pass(self) -> None:
+        """Metric 0.04 with warn=0.05 produces pass."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.04}
+        thresholds = {"duplicate_rate_warn": 0.05, "duplicate_rate_fail": 0.15}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "pass"
+
+    def test_metric_at_warn_is_warn(self) -> None:
+        """Metric exactly at warn threshold produces warn."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.05}
+        thresholds = {"duplicate_rate_warn": 0.05, "duplicate_rate_fail": 0.15}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "warn"
+
+    def test_metric_between_warn_and_fail_is_warn(self) -> None:
+        """Metric 0.08 with warn=0.05, fail=0.15 produces warn."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.08}
+        thresholds = {"duplicate_rate_warn": 0.05, "duplicate_rate_fail": 0.15}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "warn"
+
+    def test_metric_at_fail_is_fail(self) -> None:
+        """Metric exactly at fail threshold produces fail."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.15}
+        thresholds = {"duplicate_rate_warn": 0.05, "duplicate_rate_fail": 0.15}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "fail"
+
+    def test_metric_above_fail_is_fail(self) -> None:
+        """Metric 0.20 with fail=0.15 produces fail."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.20}
+        thresholds = {"duplicate_rate_warn": 0.05, "duplicate_rate_fail": 0.15}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "fail"
+
+    def test_metric_without_thresholds_is_pass(self) -> None:
+        """Metric with no configured thresholds defaults to pass."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"avg_confidence_score": 0.75}
+        thresholds: dict[str, float] = {}
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["avg_confidence_score"] == "pass"
+
+    def test_multiple_metrics_evaluated(self) -> None:
+        """All metrics in the dict are evaluated independently."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {
+            "duplicate_rate": 0.04,       # below warn -> pass
+            "missing_discharge_rate": 0.12,  # between warn and fail -> warn
+            "failed_event_rate": 0.06,     # above fail -> fail
+        }
+        thresholds = {
+            "duplicate_rate_warn": 0.05,
+            "duplicate_rate_fail": 0.15,
+            "missing_discharge_rate_warn": 0.10,
+            "missing_discharge_rate_fail": 0.25,
+            "failed_event_rate_warn": 0.02,
+            "failed_event_rate_fail": 0.05,
+        }
+
+        statuses = computer.evaluate_thresholds(metrics, thresholds)
+        assert statuses["duplicate_rate"] == "pass"
+        assert statuses["missing_discharge_rate"] == "warn"
+        assert statuses["failed_event_rate"] == "fail"
+
+    def test_default_alerting_thresholds(self) -> None:
+        """Evaluate against default AlertingConfig thresholds."""
+        from asre.config.schema import AlertingConfig
+        from asre.quality.metrics import QualityMetricComputer
+
+        config = AlertingConfig()
+        computer = QualityMetricComputer()
+
+        metrics = {
+            "duplicate_rate": 0.04,
+            "missing_discharge_rate": 0.08,
+            "reconciliation_mismatch_rate": 0.08,
+            "low_confidence_rate": 0.14,
+            "facility_unresolved_rate": 0.04,
+            "failed_event_rate": 0.01,
+        }
+
+        statuses = computer.evaluate_thresholds(metrics, config.thresholds)
+
+        # All below warn thresholds
+        assert statuses["duplicate_rate"] == "pass"
+        assert statuses["missing_discharge_rate"] == "pass"
+        assert statuses["reconciliation_mismatch_rate"] == "pass"
+        assert statuses["low_confidence_rate"] == "pass"
+        assert statuses["facility_unresolved_rate"] == "pass"
+        assert statuses["failed_event_rate"] == "pass"
+
+
+class TestToRecordsWithStatus:
+    """Test that to_records() includes status when statuses are provided."""
+
+    def test_records_include_status(self) -> None:
+        """Records include status field when statuses dict is provided."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.04, "failed_event_rate": 0.06}
+        statuses = {"duplicate_rate": "pass", "failed_event_rate": "fail"}
+
+        records = computer.to_records(
+            metrics=metrics,
+            run_id="run_test",
+            statuses=statuses,
+        )
+
+        record_map = {r["metric_name"]: r for r in records}
+        assert record_map["duplicate_rate"]["status"] == "pass"
+        assert record_map["failed_event_rate"]["status"] == "fail"
+
+    def test_records_without_status_when_none(self) -> None:
+        """Records do NOT include status field when statuses is None."""
+        from asre.quality.metrics import QualityMetricComputer
+
+        computer = QualityMetricComputer()
+        metrics = {"duplicate_rate": 0.04}
+
+        records = computer.to_records(
+            metrics=metrics,
+            run_id="run_test",
+        )
+
+        assert "status" not in records[0]
