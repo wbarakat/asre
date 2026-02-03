@@ -1651,3 +1651,16 @@
   - 6 tests covering: within window (1), outside window (1), both-must-be-acute (1), first admission (1), boundary (1), chain with readmission (1)
   - Total test count: 1180 passed (1174 existing + 6 new)
 ---
+
+## 2026-02-02 - US-088
+- Implemented `includes_post_acute` flag on `_EpisodeGroup` in episode stitcher
+- Added `includes_post_acute: bool = False` field to `_EpisodeGroup` dataclass
+- Set flag to True when `_try_link()` returns "post_acute" linkage type
+- The post-acute stitching logic already existed from US-086; this story adds the metadata flag
+- Files changed: asre/episode/episode_stitcher.py (modified), tests/unit/test_episode_stitcher.py (modified), prd.json (updated)
+- **Learnings for future iterations:**
+  - Pattern for adding episode metadata flags: add field to `_EpisodeGroup`, set in `_stitch_patient()` where linkage type is checked — same pattern used for `includes_readmission`
+  - Post-acute linkage fires when prior is acute, current is non-acute (is_acute=False), and gap <= post_acute_linkage_days
+  - 4 new tests: within window sets flag, outside window no flag, no post-acute encounters flag false, chain with both readmission and post-acute flags
+  - Total test count: 1178 passed (1174 existing + 4 new)
+---

@@ -560,3 +560,122 @@ class TestMultiEncounterChains:
 
         assert len(episodes) == 1
         assert episodes[0].encounter_ids == ["enc-1", "enc-2", "enc-3"]
+
+
+# ---------------------------------------------------------------------------
+# Post-acute linkage — includes_post_acute flag (US-088)
+# ---------------------------------------------------------------------------
+
+
+class TestPostAcuteFlag:
+    """Test that episodes with post-acute linkage have includes_post_acute set."""
+
+    def test_acute_to_snf_within_window_sets_includes_post_acute(self) -> None:
+        """Acute discharge + SNF admit within 14 days -> includes_post_acute=True."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 8, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 20, 14, 0, tzinfo=timezone.utc),
+            is_acute=False,
+            facility_canonical_id="FAC-SNF",
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2])
+
+        assert len(episodes) == 1
+        assert episodes[0].includes_post_acute is True
+
+    def test_acute_to_snf_outside_window_no_flag(self) -> None:
+        """Acute discharge + SNF admit > 14 days -> separate episodes, no flag."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 25, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 2, 5, 14, 0, tzinfo=timezone.utc),
+            is_acute=False,
+            facility_canonical_id="FAC-SNF",
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2])
+
+        assert len(episodes) == 2
+        assert episodes[0].includes_post_acute is False
+        assert episodes[1].includes_post_acute is False
+
+    def test_no_post_acute_encounters_flag_false(self) -> None:
+        """Episodes with only acute encounters have includes_post_acute=False."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 18, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+            is_readmission=True,
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2])
+
+        assert len(episodes) == 1
+        assert episodes[0].includes_post_acute is False
+
+    def test_chain_with_post_acute_sets_flag(self) -> None:
+        """A -> readmit B -> post-acute C: episode has both readmission and post_acute flags."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 5, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 20, 14, 0, tzinfo=timezone.utc),
+            is_acute=True,
+            is_readmission=True,
+        )
+        enc3 = _make_encounter(
+            "enc-3",
+            "PAT-A",
+            datetime(2024, 1, 25, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 2, 10, 14, 0, tzinfo=timezone.utc),
+            is_acute=False,
+            facility_canonical_id="FAC-SNF",
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2, enc3])
+
+        assert len(episodes) == 1
+        assert episodes[0].includes_readmission is True
+        assert episodes[0].includes_post_acute is True

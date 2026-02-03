@@ -35,6 +35,7 @@ class _EpisodeGroup:
     encounters: list[Encounter] = field(default_factory=list)
     patient_key: str = ""
     includes_readmission: bool = False
+    includes_post_acute: bool = False
 
     @property
     def last_encounter(self) -> Encounter:
@@ -98,6 +99,8 @@ class EpisodeStitcher:
                 current.add(enc)
                 if linkage == "readmission":
                     current.includes_readmission = True
+                elif linkage == "post_acute":
+                    current.includes_post_acute = True
             else:
                 current = _EpisodeGroup()
                 current.add(enc)
