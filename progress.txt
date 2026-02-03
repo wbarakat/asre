@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- EpisodeStitcher in `asre/episode/episode_stitcher.py`: stitch(encounters) returns list[_EpisodeGroup]; partitions by patient_key, sorts by admit_ts, checks 4 linkage rules in order: readmission (both acute, within window), post-acute (prior acute, current non-acute, within window), ED bounce-back (current ed_only, within window), planned return (same facility, within window but beyond readmission window for acute-to-acute); _EpisodeGroup accumulates encounter_ids and encounters; linkage checks against last discharged encounter in group
 - dbt schema tests defined in `dbt_project/models/marts/schema.yml` (version 2 format); generic tests (unique, not_null, accepted_values, relationships) applied per-column; relationships test uses `to: ref('model_name')` and `field: column_name`
 - QualityMetricComputer in `asre/quality/metrics.py`: compute() takes encounters + stage_metrics + counts, returns dict[str, float] of 12 metrics; to_records() converts to list of row dicts for asre_quality_metrics table; flag-based rates use _FLAG_METRIC_MAP for flag->metric_key mapping; low_confidence_rate uses < 0.60 threshold
 - Migration scripts in `asre/migration/versions/` follow `_NNN_description.py` naming; each has `description` attr and `upgrade(adapter)` function; use `CREATE TABLE IF NOT EXISTS` for idempotency; when adding new migrations, update hardcoded version assertions in `tests/unit/test_migrator.py` and `tests/integration/test_migrator_integration.py`
@@ -1624,4 +1625,15 @@
   - QualityCheckStage uses QualityMetricComputer.compute() then evaluate_thresholds() then Alerter.fire() in sequence
   - _ensure_table() DDL matches the migration DDL in _003_output_tables.py for asre_quality_metrics
   - Watermark is set via adapter.set_watermark("quality_check", timestamp) after successful metric persistence
+---
+
+## 2026-02-03 - US-086
+- What was implemented: EpisodeStitcher class that groups encounters into episodes based on 4 temporal/clinical linkage rules
+- Files changed: asre/episode/episode_stitcher.py (new), tests/unit/test_episode_stitcher.py (new)
+- **Learnings for future iterations:**
+  - Episode stitching operates on Encounter objects (final output), not StitchedEncounter (intermediate)
+  - Planned return linkage must NOT fire within the readmission window for acute-to-acute encounters — otherwise it overrides readmission rule with a broader window
+  - Linkage requires a prior discharged encounter; open encounters (no discharge_ts) cannot anchor linkage
+  - _EpisodeGroup is a mutable accumulator with encounter_ids and encounters lists; _last_discharged() finds the anchor for gap computation
+  - Tests must use different facility_canonical_ids when testing rule isolation (e.g., readmission-only) to avoid planned return linkage at same facility
 ---
