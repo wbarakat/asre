@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: asre_raw
     description: "Raw tables populated by the ASRE Python pipeline"
-    schema: public
+    schema: "{{ var('asre_source_schema', target.schema) }}"
     tables:
       - name: admission_events_unified
         description: "Encounter-level unified view with confidence scores, written by MaterializeStage"

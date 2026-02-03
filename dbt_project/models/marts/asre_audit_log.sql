@@ -7,7 +7,7 @@
 select
     log_id,
     run_id,
-    timestamp,
+    {{ quote_identifier('timestamp') }} as {{ quote_identifier('timestamp') }},
     action,
     entity_type,
     entity_id,

@@ -10,3 +10,32 @@ asre:
       dbname: "{{ env_var('ASRE_DB_NAME', 'asre_dev') }}"
       schema: public
       threads: 4
+
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('ASRE_SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('ASRE_SNOWFLAKE_USER') }}"
+      password: "{{ env_var('ASRE_SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('ASRE_SNOWFLAKE_ROLE', 'TRANSFORMER') }}"
+      warehouse: "{{ env_var('ASRE_SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      database: "{{ env_var('ASRE_SNOWFLAKE_DATABASE') }}"
+      schema: "{{ env_var('ASRE_SNOWFLAKE_SCHEMA', 'PUBLIC') }}"
+      threads: 4
+
+    bigquery:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('ASRE_BIGQUERY_PROJECT') }}"
+      dataset: "{{ env_var('ASRE_BIGQUERY_DATASET', 'asre') }}"
+      threads: 4
+      location: "{{ env_var('ASRE_BIGQUERY_LOCATION', 'US') }}"
+
+    redshift:
+      type: redshift
+      host: "{{ env_var('ASRE_REDSHIFT_HOST') }}"
+      port: "{{ env_var('ASRE_REDSHIFT_PORT', '5439') | int }}"
+      user: "{{ env_var('ASRE_REDSHIFT_USER') }}"
+      password: "{{ env_var('ASRE_REDSHIFT_PASSWORD') }}"
+      dbname: "{{ env_var('ASRE_REDSHIFT_DBNAME') }}"
+      schema: "{{ env_var('ASRE_REDSHIFT_SCHEMA', 'public') }}"
+      threads: 4

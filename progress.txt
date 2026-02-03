@@ -1,6 +1,10 @@
 ## Codebase Patterns
+- dbt cross-warehouse macros in `dbt_project/macros/cross_warehouse.sql`: `json_type()` (JSONB/VARIANT/JSON/SUPER), `array_type()`, `timestamp_type()` (TIMESTAMPTZ/TIMESTAMP_TZ/TIMESTAMP), `quote_identifier(name)` (double-quotes vs backticks for BigQuery), `current_timestamp_value()`
+- dbt profiles in `dbt_project/profiles.yml`: dev (postgres), snowflake, bigquery, redshift targets; source schema configurable via `var('asre_source_schema', target.schema)` in sources.yml
+- dbt `asre_audit_log.sql` uses `quote_identifier('timestamp')` macro because `timestamp` is a reserved word in BigQuery
 - SnowflakeAdapter in `asre/ingest/snowflake.py`: uses snowflake-connector-python with try/except ImportError for optional dependency; uses cursor-based API (not SQLAlchemy); MERGE for upsert (not ON CONFLICT); %s parameter style; JSON-serializes dict/list values for VARIANT/ARRAY columns in write_records; mypy config has `[[tool.mypy.overrides]] module = "snowflake.*" ignore_missing_imports = true`
 - BigQueryAdapter in `asre/ingest/bigquery.py`: uses google-cloud-bigquery with try/except ImportError for optional dependency; uses client.query() API; MERGE for upsert; @param parameterized queries via QueryJobConfig + ScalarQueryParameter; JSON type literal for dict/list values in INSERT; _make_job_config() helper method for parameterized queries; dataset prefix on table names (`dataset.table`); backtick-quoted identifiers; mypy override for `google.*`
+- RedshiftAdapter in `asre/ingest/redshift.py`: uses redshift-connector with try/except ImportError for optional dependency; uses cursor-based API (like Snowflake); DELETE + INSERT for upsert (Redshift lacks MERGE/ON CONFLICT); %s parameter style; JSON-serializes dict/list values for SUPER columns in write_records; schema-qualified table names (`schema.table`); mypy override for `redshift_connector.*`
 - For warehouse adapter tests without the SDK installed: patch module-level `_HAS_BIGQUERY`/`QueryJobConfig`/`ScalarQueryParameter` variables; use `_make_row_mock()` helper that implements dict-like interface for BigQuery Row objects
 - Episode stages in `asre/episode/stage.py`: EpisodeStitchStage (encounters_in -> episodes), EpisodeMaterializeStage (episodes_in -> asre_episodes table + episode_id FK update), EpisodeQualityStage (episodes_in -> episode_count, readmission_rate, mean_confidence)
 - `record_to_encounter(record: dict) -> Encounter` in `asre/episode/stage.py`: converts DB row from admission_events_unified back to Encounter dataclass; handles JSON string fields (source_event_ids, source_systems, confidence_flags, diagnosis_codes, transfer_chain) and ISO datetime parsing
@@ -1827,4 +1831,40 @@
   - When using try/except ImportError for optional deps, import ALL needed classes at top level to avoid inline imports that fail without the library
   - Use `_HAS_BIGQUERY` boolean flag pattern + patching in tests instead of `type: ignore` comments
   - `replace_all` in Edit tool can join lines when the replaced text includes trailing content — be careful with bulk replacements
+---
+
+## 2026-02-02 - US-099
+- What was implemented
+  - RedshiftAdapter in `asre/ingest/redshift.py` implementing IngestAdapter interface
+  - Uses redshift-connector with try/except ImportError for optional dependency
+  - Cursor-based API (similar to Snowflake adapter pattern)
+  - DELETE + INSERT for upsert (Redshift lacks MERGE)
+  - JSON-serializes dict/list values for SUPER columns
+  - Schema-qualified table names (`schema.table`)
+  - Added mypy override for `redshift_connector.*` in pyproject.toml
+- Files changed
+  - `asre/ingest/redshift.py` (new)
+  - `tests/unit/test_redshift_adapter.py` (new, 24 tests)
+  - `pyproject.toml` (added mypy override)
+- **Learnings for future iterations:**
+  - Redshift uses DELETE + INSERT instead of MERGE for upsert — unlike Snowflake and BigQuery which both support MERGE
+  - Redshift uses `redshift_connector.connect()` not `redshift_connector.Connection()` — the `connect` function is the entry point
+  - Don't use `type: ignore[assignment]` on the fallback `redshift_connect = None` — mypy strict with `unused-ignore` will reject it since the module isn't installed. Just use bare `None` assignment.
+  - Redshift schema-qualifies table names (`schema.table`) similar to how BigQuery uses dataset prefix
+---
+
+## 2026-02-02 - US-100
+- What was implemented: Cross-warehouse dbt compatibility for Snowflake, BigQuery, and Redshift
+- Files changed:
+  - `dbt_project/profiles.yml` (added snowflake, bigquery, redshift targets)
+  - `dbt_project/macros/cross_warehouse.sql` (new - warehouse-specific SQL macros)
+  - `dbt_project/models/marts/asre_audit_log.sql` (use quote_identifier for reserved word)
+  - `dbt_project/models/staging/sources.yml` (configurable schema via var/target.schema)
+  - `tests/unit/test_dbt_cross_warehouse.py` (new - 25 tests)
+- **Learnings for future iterations:**
+  - dbt models in this project are simple SELECT-from-source — the Python pipeline does the heavy lifting. Cross-warehouse differences are minimal at the dbt layer.
+  - `timestamp` is a reserved word in BigQuery — always quote it using the `quote_identifier()` macro
+  - Source schema should use `var('asre_source_schema', target.schema)` instead of hardcoded `public` for portability
+  - dbt handles incremental merge/upsert differently per adapter natively (MERGE for Snowflake/BigQuery, DELETE+INSERT for Redshift/Postgres) — no custom macro needed when using `unique_key` in config
+  - BigQuery uses backticks for quoting, all others use double quotes
 ---

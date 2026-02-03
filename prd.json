@@ -1702,7 +1702,7 @@
         "Tests pass"
       ],
       "priority": 99,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -1718,7 +1718,7 @@
         "Tests pass"
       ],
       "priority": 100,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
