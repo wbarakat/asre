@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- QualityMetricComputer in `asre/quality/metrics.py`: compute() takes encounters + stage_metrics + counts, returns dict[str, float] of 12 metrics; to_records() converts to list of row dicts for asre_quality_metrics table; flag-based rates use _FLAG_METRIC_MAP for flag->metric_key mapping; low_confidence_rate uses < 0.60 threshold
 - Migration scripts in `asre/migration/versions/` follow `_NNN_description.py` naming; each has `description` attr and `upgrade(adapter)` function; use `CREATE TABLE IF NOT EXISTS` for idempotency; when adding new migrations, update hardcoded version assertions in `tests/unit/test_migrator.py` and `tests/integration/test_migrator_integration.py`
 - CLI diagnostic commands in `asre/cli/main.py`: `status`, `inspect run/encounter/errors`; each subcommand has its own `--config-path`/`--customer-id` options (not on parent group) for flexible CLI/test invocation; `_get_diagnostic_adapter()` creates connected adapter for read-only queries
 - ErrorToleranceChecker in `asre/pipeline/error_tolerance.py`: computes failed_event_rate = failed/total, raises FailedEventRateExceededError if rate >= threshold; PipelineRunner._check_error_tolerance() aggregates cumulative errors/records_in from self.stage_metrics after each stage
@@ -1550,4 +1551,19 @@
   - The DDL schemas in existing modules (MaterializeStage, AuditLogger, RunMetricsWriter) each create their own tables inline with ensure_table(); the migration centralizes this for fresh installs
   - asre_quality_metrics table was not yet defined anywhere — designed schema based on SPEC §8.2 requirements
   - Total test count: 1072 passed (unit tests)
+---
+
+## 2026-02-02 - US-081
+- What was implemented: QualityMetricComputer class in asre/quality/metrics.py that computes all 12 quality metrics (duplicate_rate, missing_discharge_rate, reconciliation_mismatch_rate, low_confidence_rate, facility_unresolved_rate, auth_without_admit_rate, claims_only_rate, avg_confidence_score, events_ingested, encounters_created, encounters_updated, failed_event_rate) from scored encounters and stage metrics. Includes to_records() method for converting metrics to DB row dicts.
+- Files changed:
+  - `asre/quality/metrics.py` — new QualityMetricComputer class
+  - `tests/unit/test_quality_metrics.py` — 18 unit tests covering all metrics, edge cases, and to_records conversion
+  - `prd.json` — marked US-081 as passes: true
+- **Learnings for future iterations:**
+  - Flag-based quality metrics map directly from encounter confidence_flags: DUPLICATE_DETECTED -> duplicate_rate, MISSING_DISCHARGE -> missing_discharge_rate, TIMESTAMP_MISMATCH -> reconciliation_mismatch_rate, etc.
+  - Low confidence threshold is 0.60 (score < 0.60 = low confidence), matching the Medium/Low boundary from ScoreStage._classify_score
+  - failed_event_rate is computed from stage_metrics (sum errors / sum records_in across all stages), not from encounters
+  - ReconciledEncounter stores confidence_score as dynamically-set attribute (via `enc.confidence_score = value`), accessed with getattr
+  - The PRD lists "11 metrics" but the acceptance criteria actually lists 12 metric names (events_ingested, encounters_created, encounters_updated are separate)
+  - Total test count: 1090 passed (unit tests)
 ---
