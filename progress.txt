@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Migration scripts in `asre/migration/versions/` follow `_NNN_description.py` naming; each has `description` attr and `upgrade(adapter)` function; use `CREATE TABLE IF NOT EXISTS` for idempotency; when adding new migrations, update hardcoded version assertions in `tests/unit/test_migrator.py` and `tests/integration/test_migrator_integration.py`
 - CLI diagnostic commands in `asre/cli/main.py`: `status`, `inspect run/encounter/errors`; each subcommand has its own `--config-path`/`--customer-id` options (not on parent group) for flexible CLI/test invocation; `_get_diagnostic_adapter()` creates connected adapter for read-only queries
 - ErrorToleranceChecker in `asre/pipeline/error_tolerance.py`: computes failed_event_rate = failed/total, raises FailedEventRateExceededError if rate >= threshold; PipelineRunner._check_error_tolerance() aggregates cumulative errors/records_in from self.stage_metrics after each stage
 - PipelineRunner.run() iterates `self._stages.keys()` (not _STAGE_ORDER) to support tests replacing _stages with custom OrderedDicts
@@ -1512,4 +1513,41 @@
   - Existing `asre run --mode full|incremental` already worked from prior stories, no changes needed
   - `adapter.read_source(source_name, query, params)` is the standard pattern for all diagnostic queries
   - Total test count: 1054 passed (unit tests)
+---
+## 2026-02-02 - US-079
+- Implemented dbt mart models for all four output tables
+- Created source definition in `dbt_project/models/staging/sources.yml` referencing raw tables populated by Python pipeline
+- Files changed:
+  - `dbt_project/models/staging/sources.yml` (new): Source definitions for asre_raw schema (4 tables)
+  - `dbt_project/models/marts/admission_events_unified.sql` (new): Incremental model with merge on encounter_id, filters by updated_at for incremental runs
+  - `dbt_project/models/marts/asre_encounters_detail.sql` (new): Full table materialization of event-level detail
+  - `dbt_project/models/marts/asre_audit_log.sql` (new): Full table materialization of audit trail
+  - `dbt_project/models/marts/asre_run_metrics.sql` (new): Full table materialization of per-stage metrics
+  - `dbt_project/models/marts/.gitkeep` (deleted): No longer needed with real model files
+  - `tests/unit/test_dbt_project.py`: Updated .gitkeep test to only check intermediate directory (marts now has real models)
+  - `prd.json`: Marked US-079 as passing
+- dbt compile finds 4 models and 4 sources successfully
+- **Learnings for future iterations:**
+  - dbt mart models read from source tables created by Python pipeline (MaterializeStage, AuditLogger, RunMetricsWriter)
+  - admission_events_unified uses incremental materialization with updated_at column for efficient reruns
+  - Other tables (detail, audit, metrics) use full table materialization since they're append-oriented
+  - Sources defined in staging/sources.yml referencing public schema — adjust schema if customer uses different schema name
+  - .gitkeep files should be removed when real files are added to a directory; update corresponding tests
+  - Total test count: 1054 passed (unit tests)
+---
+
+## 2026-02-02 - US-080
+- What was implemented: Migration script `_003_output_tables.py` that creates all 5 ASRE output tables (admission_events_unified, asre_encounters_detail, asre_audit_log, asre_run_metrics, asre_quality_metrics)
+- Files changed:
+  - `asre/migration/versions/_003_output_tables.py` (new) — migration with 5 CREATE TABLE IF NOT EXISTS statements
+  - `tests/unit/test_003_output_tables.py` (new) — 18 unit tests verifying table creation, columns, primary keys, idempotency
+  - `tests/unit/test_migrator.py` — updated hardcoded schema version from 1 to 3
+  - `tests/integration/test_migrator_integration.py` — updated expected applied count (1->2) and version (1->3), added cleanup for output tables
+- **Learnings for future iterations:**
+  - When adding new migration scripts, existing migrator tests have hardcoded version/count assertions that must be updated
+  - Migration file naming: `_NNN_description.py` (underscore prefix, 3-digit version number)
+  - There is no migration 002 — version numbers can have gaps, migrator discovers by numeric prefix
+  - The DDL schemas in existing modules (MaterializeStage, AuditLogger, RunMetricsWriter) each create their own tables inline with ensure_table(); the migration centralizes this for fresh installs
+  - asre_quality_metrics table was not yet defined anywhere — designed schema based on SPEC §8.2 requirements
+  - Total test count: 1072 passed (unit tests)
 ---

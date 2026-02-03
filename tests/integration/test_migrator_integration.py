@@ -30,8 +30,13 @@ def pg_adapter() -> Generator[PostgresAdapter, None, None]:
     except ConnectionError:
         pytest.skip("PostgreSQL not available for integration tests")
     yield adapter
-    # Clean up: drop asre_metadata if it exists
+    # Clean up: drop all tables created by migrations
     try:
+        adapter.execute_ddl("DROP TABLE IF EXISTS asre_quality_metrics")
+        adapter.execute_ddl("DROP TABLE IF EXISTS asre_run_metrics")
+        adapter.execute_ddl("DROP TABLE IF EXISTS asre_audit_log")
+        adapter.execute_ddl("DROP TABLE IF EXISTS asre_encounters_detail")
+        adapter.execute_ddl("DROP TABLE IF EXISTS admission_events_unified")
         adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
     except Exception:
         pass
@@ -49,8 +54,8 @@ class TestMigratorIntegration:
         migrator = Migrator(pg_adapter)
         result = migrator.run()
 
-        assert result.applied == 1
-        assert result.current_version == 1
+        assert result.applied == 2
+        assert result.current_version == 3
 
     def test_asre_metadata_table_created(self, pg_adapter: PostgresAdapter) -> None:
         """After migration, asre_metadata table exists with schema_version."""
@@ -66,7 +71,7 @@ class TestMigratorIntegration:
         )
         assert len(rows) == 1
         assert rows[0]["key"] == "schema_version"
-        assert rows[0]["value"] == "1"
+        assert rows[0]["value"] == "3"
 
     def test_run_is_idempotent(self, pg_adapter: PostgresAdapter) -> None:
         """Running migrator twice doesn't error or re-apply."""
@@ -76,9 +81,9 @@ class TestMigratorIntegration:
         result1 = migrator.run()
         result2 = migrator.run()
 
-        assert result1.applied == 1
+        assert result1.applied == 2
         assert result2.applied == 0
-        assert result2.current_version == 1
+        assert result2.current_version == 3
 
     def test_schema_version_check(self, pg_adapter: PostgresAdapter) -> None:
         """get_schema_version returns correct value after migration."""
@@ -88,7 +93,7 @@ class TestMigratorIntegration:
         migrator.run()
 
         version = migrator.get_schema_version()
-        assert version == 1
+        assert version == 3
 
     def test_watermark_works_after_migration(self, pg_adapter: PostgresAdapter) -> None:
         """Watermark management works on the migrated asre_metadata table."""
