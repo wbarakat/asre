@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- EpisodeMetadataBuilder in `asre/episode/metadata_builder.py`: build(episode_id, encounters, includes_readmission, includes_post_acute) -> Episode; uses EpisodeScorer for confidence, classify_episode_type() for episode_type; episode_status derived from encounter statuses (active/closed/reopened)
 - AHRQCCSGrouper in `asre/groupers/ahrq_ccs.py`: implements ConditionGrouper; _classify_by_drg() checks DRG integer ranges first, _classify_by_icd10() uses ICD-10 prefix matching; specific categories (chronic_exacerbation, maternity, behavioral_health, surgical) checked before broad medical catch-all
 - `classify_episode_type(diagnosis_codes, drg) -> str` in `asre/episode/condition_grouper.py`: dispatcher function using AHRQCCSGrouper singleton; use this for episode type classification
 - ConditionGrouper ABC in `asre/groupers/base.py`: abstract group(diagnosis_codes, drg) -> str; valid return values in VALID_EPISODE_TYPES frozenset: surgical, medical, chronic_exacerbation, maternity, behavioral_health, unclassified; diagnosis_codes param is list[dict[str, str | None]] with keys code, type, sequence, poa
@@ -1728,4 +1729,20 @@
   - EpisodeScorer.compute_score() takes list[Encounter], returns float; uses los_hours as weight with 1h minimum for zero/null LOS
   - _MIN_WEIGHT_HOURS = 1.0 constant in episode_scorer.py for the fallback weight
   - Pattern: episode scoring is separate from encounter scoring (ConfidenceScorer); episode score aggregates encounter scores
+---
+
+## 2026-02-02 - US-094
+- What was implemented: EpisodeMetadataBuilder class that converts episode group data (encounters, linkage flags) into fully populated Episode dataclass with all fields from SPEC §3.4
+- Files changed:
+  - `asre/episode/metadata_builder.py` (new) — EpisodeMetadataBuilder class
+  - `tests/unit/test_episode_metadata.py` (new) — 11 tests covering all metadata fields
+- **Learnings for future iterations:**
+  - EpisodeMetadataBuilder.build() takes episode_id, encounters list, includes_readmission, includes_post_acute as inputs — these come from _EpisodeGroup in episode_stitcher.py
+  - Episode status logic: "active" if any encounter open, "closed" if all closed/cancelled; "reopened" reserved for future use
+  - facility_sequence: unique facility IDs in order of first appearance by admit_ts
+  - total_los_days computed from episode_start_ts to episode_end_ts (None if episode open)
+  - Episode type classification uses classify_episode_type() from condition_grouper.py (DRG first, then AHRQ CCS)
+  - Confidence score uses EpisodeScorer (LOS-weighted mean of encounter scores)
+  - Diagnosis codes aggregated across encounters, deduplicated by code value
+  - Principal diagnosis taken from first encounter that has one
 ---
