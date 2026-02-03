@@ -1609,3 +1609,19 @@
   - For mypy strict: `yaml.safe_load()` returns `Any`, so assign to typed local variable before returning
   - Schema YAML also covers `asre_audit_log` and `asre_run_metrics` with basic not_null tests
 ---
+## 2026-02-02 - US-085
+- Implemented QualityCheckStage in `asre/quality/stage.py`
+- Replaced _NoOpStage("quality_check") with QualityCheckStage in PipelineRunner._build_stages()
+- Added data handoff in PipelineRunner._handoff() for materialize -> quality_check (scored_encounters, encounters_created, encounters_updated, stage_metrics)
+- Created dbt model `dbt_project/models/marts/asre_quality_metrics.sql`
+- Added asre_quality_metrics source to `dbt_project/models/staging/sources.yml`
+- Added asre_quality_metrics model with tests to `dbt_project/models/marts/schema.yml`
+- 21 unit tests covering: import/interface, metric computation, threshold evaluation, alerting, DB writes, watermark update, stage metrics
+- Files changed: asre/quality/stage.py (new), asre/pipeline/runner.py (modified), dbt_project/models/marts/asre_quality_metrics.sql (new), dbt_project/models/staging/sources.yml (modified), dbt_project/models/marts/schema.yml (modified), tests/unit/test_quality_check_stage.py (new)
+- **Learnings for future iterations:**
+  - QualityCheckStage receives data via context.config keys: scored_encounters, stage_metrics, encounters_created, encounters_updated
+  - Pipeline handoff chain: score -> materialize -> quality_check; materialize stage provides encounter insert/update counts
+  - QualityCheckStage uses QualityMetricComputer.compute() then evaluate_thresholds() then Alerter.fire() in sequence
+  - _ensure_table() DDL matches the migration DDL in _003_output_tables.py for asre_quality_metrics
+  - Watermark is set via adapter.set_watermark("quality_check", timestamp) after successful metric persistence
+---

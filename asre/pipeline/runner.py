@@ -142,8 +142,10 @@ class PipelineRunner:
 
         stages["materialize"] = MaterializeStage()
 
-        # Quality Check (placeholder)
-        stages["quality_check"] = _NoOpStage("quality_check")
+        # Quality Check
+        from asre.quality.stage import QualityCheckStage
+
+        stages["quality_check"] = QualityCheckStage()
 
         return stages
 
@@ -382,3 +384,15 @@ class PipelineRunner:
             materialize = self._stages.get("materialize")
             if hasattr(stage, "encounters") and hasattr(materialize, "encounters_in"):
                 materialize.encounters_in = stage.encounters  # type: ignore[union-attr]
+
+            # Also store scored encounters for quality_check stage
+            if hasattr(stage, "encounters"):
+                context.config["scored_encounters"] = stage.encounters
+
+        elif stage_name == "materialize":
+            # Pass materialization counts and stage metrics to quality_check
+            if hasattr(stage, "encounters_inserted"):
+                context.config["encounters_created"] = stage.encounters_inserted
+            if hasattr(stage, "encounters_updated"):
+                context.config["encounters_updated"] = stage.encounters_updated
+            context.config["stage_metrics"] = list(self.stage_metrics)

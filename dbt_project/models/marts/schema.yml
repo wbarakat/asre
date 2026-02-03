@@ -59,3 +59,15 @@ models:
         description: "Pipeline stage name"
         tests:
           - not_null
+
+  - name: asre_quality_metrics
+    description: "Per-run quality metrics with pass/warn/fail status"
+    columns:
+      - name: run_id
+        description: "Pipeline run identifier"
+        tests:
+          - not_null
+      - name: metric_name
+        description: "Quality metric name"
+        tests:
+          - not_null

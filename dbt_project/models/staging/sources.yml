@@ -13,3 +13,5 @@ sources:
         description: "Pipeline modification audit trail, written by AuditLogger"
       - name: asre_run_metrics
         description: "Per-stage timing and throughput metrics, written by RunMetricsWriter"
+      - name: asre_quality_metrics
+        description: "Per-run quality metrics with pass/warn/fail status, written by QualityCheckStage"
