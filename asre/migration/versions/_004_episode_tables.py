@@ -15,26 +15,40 @@ description = "episode tables"
 
 def upgrade(adapter: IngestAdapter) -> None:
     """Create the asre_episodes table."""
+    from asre.migration.ddl_types import DDLTypeMapper
+
+    wt = getattr(adapter, "warehouse_type", "postgres")
+    m = DDLTypeMapper(wt)
+
+    t = m.text()
+    b = m.boolean()
+    r = m.real()
+    i = m.integer()
+    pk = m.primary_key("episode_id")
+
+    cols = [
+        pk,
+        f"patient_key {t} NOT NULL",
+        f"episode_type {t} NOT NULL",
+        f"episode_status {t} NOT NULL",
+        f"episode_start_ts {t}",
+        f"episode_end_ts {t}",
+        f"total_los_days {r}",
+        f"encounter_ids {t}",
+        f"encounter_count {i}",
+        f"facility_count {i}",
+        f"facility_sequence {t}",
+        f"includes_readmission {b}",
+        f"includes_post_acute {b}",
+        f"is_acute {b}",
+        f"principal_diagnosis {t}",
+        f"diagnosis_codes {t}",
+        f"confidence_score {r}",
+        f"created_at {t}",
+        f"updated_at {t}",
+    ]
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_episodes ("
-        "episode_id TEXT PRIMARY KEY, "
-        "patient_key TEXT NOT NULL, "
-        "episode_type TEXT NOT NULL, "
-        "episode_status TEXT NOT NULL, "
-        "episode_start_ts TEXT, "
-        "episode_end_ts TEXT, "
-        "total_los_days REAL, "
-        "encounter_ids TEXT, "
-        "encounter_count INTEGER, "
-        "facility_count INTEGER, "
-        "facility_sequence TEXT, "
-        "includes_readmission BOOLEAN, "
-        "includes_post_acute BOOLEAN, "
-        "is_acute BOOLEAN, "
-        "principal_diagnosis TEXT, "
-        "diagnosis_codes TEXT, "
-        "confidence_score REAL, "
-        "created_at TEXT, "
-        "updated_at TEXT"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_episodes ({col_str})"
     )

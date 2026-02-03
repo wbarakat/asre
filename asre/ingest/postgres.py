@@ -22,6 +22,10 @@ class PostgresAdapter(IngestAdapter):
         self._engine: Engine | None = None
         self._connection: Connection | None = None
 
+    @property
+    def warehouse_type(self) -> str:
+        return "postgres"
+
     def connect(self) -> None:
         """Establish connection to PostgreSQL using config credentials."""
         host = self._config.get("host", "localhost")

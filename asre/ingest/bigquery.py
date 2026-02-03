@@ -36,6 +36,10 @@ class BigQueryAdapter(IngestAdapter):
         self._dataset: str = config.get("dataset", "")
         self._project: str = config.get("project", "")
 
+    @property
+    def warehouse_type(self) -> str:
+        return "bigquery"
+
     def connect(self) -> None:
         """Establish connection to BigQuery using config credentials."""
         if not _HAS_BIGQUERY:

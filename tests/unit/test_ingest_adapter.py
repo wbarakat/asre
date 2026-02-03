@@ -64,6 +64,10 @@ class TestIngestAdapterCompleteSubclass:
 
     def _make_adapter(self) -> IngestAdapter:
         class DummyAdapter(IngestAdapter):
+            @property
+            def warehouse_type(self) -> str:
+                return "postgres"
+
             def connect(self) -> None:
                 pass
 

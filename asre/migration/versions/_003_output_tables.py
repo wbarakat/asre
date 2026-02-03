@@ -14,112 +14,156 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from asre.ingest.base import IngestAdapter
+    from asre.migration.ddl_types import DDLTypeMapper
 
 description = "output tables"
 
 
 def upgrade(adapter: IngestAdapter) -> None:
     """Create all 5 ASRE output tables."""
-    _create_admission_events_unified(adapter)
-    _create_asre_encounters_detail(adapter)
-    _create_asre_audit_log(adapter)
-    _create_asre_run_metrics(adapter)
-    _create_asre_quality_metrics(adapter)
+    from asre.migration.ddl_types import DDLTypeMapper
+
+    wt = getattr(adapter, "warehouse_type", "postgres")
+    m = DDLTypeMapper(wt)
+
+    _create_admission_events_unified(adapter, m)
+    _create_asre_encounters_detail(adapter, m)
+    _create_asre_audit_log(adapter, m)
+    _create_asre_run_metrics(adapter, m)
+    _create_asre_quality_metrics(adapter, m)
 
 
-def _create_admission_events_unified(adapter: IngestAdapter) -> None:
+def _create_admission_events_unified(adapter: IngestAdapter, m: DDLTypeMapper) -> None:
+    t = m.text()
+    b = m.boolean()
+    r = m.real()
+    i = m.integer()
+    pk = m.primary_key("encounter_id")
+
+    cols = [
+        pk,
+        f"patient_key {t} NOT NULL",
+        f"encounter_type {t} NOT NULL",
+        f"status {t} NOT NULL",
+        f"admit_ts {t}",
+        f"discharge_ts {t}",
+        f"los_hours {r}",
+        f"facility_canonical_id {t}",
+        f"facility_name {t}",
+        f"is_acute {b}",
+        f"source_event_ids {t}",
+        f"source_systems {t}",
+        f"has_adt {b}",
+        f"has_claims {b}",
+        f"has_auth {b}",
+        f"confidence_score {r}",
+        f"confidence_flags {t}",
+        f"admit_source_priority {t}",
+        f"discharge_source_priority {t}",
+        f"payer_id {t}",
+        f"drg {t}",
+        f"principal_diagnosis {t}",
+        f"admitting_diagnosis {t}",
+        f"diagnosis_codes {t}",
+        f"is_readmission {b}",
+        f"readmission_days {i}",
+        f"obs_to_ip_conversion {b}",
+        f"transfer_chain {t}",
+        f"episode_id {t}",
+        f"created_at {t}",
+        f"updated_at {t}",
+        f"asre_version {t}",
+    ]
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS admission_events_unified ("
-        "encounter_id TEXT PRIMARY KEY, "
-        "patient_key TEXT NOT NULL, "
-        "encounter_type TEXT NOT NULL, "
-        "status TEXT NOT NULL, "
-        "admit_ts TEXT, "
-        "discharge_ts TEXT, "
-        "los_hours REAL, "
-        "facility_canonical_id TEXT, "
-        "facility_name TEXT, "
-        "is_acute BOOLEAN, "
-        "source_event_ids TEXT, "
-        "source_systems TEXT, "
-        "has_adt BOOLEAN, "
-        "has_claims BOOLEAN, "
-        "has_auth BOOLEAN, "
-        "confidence_score REAL, "
-        "confidence_flags TEXT, "
-        "admit_source_priority TEXT, "
-        "discharge_source_priority TEXT, "
-        "payer_id TEXT, "
-        "drg TEXT, "
-        "principal_diagnosis TEXT, "
-        "admitting_diagnosis TEXT, "
-        "diagnosis_codes TEXT, "
-        "is_readmission BOOLEAN, "
-        "readmission_days INTEGER, "
-        "obs_to_ip_conversion BOOLEAN, "
-        "transfer_chain TEXT, "
-        "episode_id TEXT, "
-        "created_at TEXT, "
-        "updated_at TEXT, "
-        "asre_version TEXT"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS admission_events_unified ({col_str})"
     )
 
 
-def _create_asre_encounters_detail(adapter: IngestAdapter) -> None:
+def _create_asre_encounters_detail(adapter: IngestAdapter, m: DDLTypeMapper) -> None:
+    t = m.text()
+    cpk = m.composite_primary_key(["encounter_id", "event_id"])
+
+    cols = [
+        f"encounter_id {t} NOT NULL",
+        f"event_id {t} NOT NULL",
+        f"event_type {t} NOT NULL",
+        f"event_ts {t}",
+        f"source_system {t}",
+        f"role_in_encounter {t}",
+    ]
+    if cpk:
+        cols.append(cpk)
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_encounters_detail ("
-        "encounter_id TEXT NOT NULL, "
-        "event_id TEXT NOT NULL, "
-        "event_type TEXT NOT NULL, "
-        "event_ts TEXT, "
-        "source_system TEXT, "
-        "role_in_encounter TEXT, "
-        "PRIMARY KEY (encounter_id, event_id)"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_encounters_detail ({col_str})"
     )
 
 
-def _create_asre_audit_log(adapter: IngestAdapter) -> None:
+def _create_asre_audit_log(adapter: IngestAdapter, m: DDLTypeMapper) -> None:
+    t = m.text()
+    pk = m.primary_key("log_id")
+
+    cols = [
+        pk,
+        f"run_id {t} NOT NULL",
+        f"timestamp {t} NOT NULL",
+        f"action {t} NOT NULL",
+        f"entity_type {t} NOT NULL",
+        f"entity_id {t} NOT NULL",
+        f"detail {t}",
+    ]
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_audit_log ("
-        "log_id TEXT PRIMARY KEY, "
-        "run_id TEXT NOT NULL, "
-        "timestamp TEXT NOT NULL, "
-        "action TEXT NOT NULL, "
-        "entity_type TEXT NOT NULL, "
-        "entity_id TEXT NOT NULL, "
-        "detail TEXT"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_audit_log ({col_str})"
     )
 
 
-def _create_asre_run_metrics(adapter: IngestAdapter) -> None:
+def _create_asre_run_metrics(adapter: IngestAdapter, m: DDLTypeMapper) -> None:
+    t = m.text()
+    i = m.integer()
+    cpk = m.composite_primary_key(["run_id", "stage_name"])
+
+    cols = [
+        f"run_id {t} NOT NULL",
+        f"stage_name {t} NOT NULL",
+        f"started_at {t}",
+        f"completed_at {t}",
+        f"records_in {i}",
+        f"records_out {i}",
+        f"errors {i}",
+        f"status {t}",
+    ]
+    if cpk:
+        cols.append(cpk)
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_run_metrics ("
-        "run_id TEXT NOT NULL, "
-        "stage_name TEXT NOT NULL, "
-        "started_at TEXT, "
-        "completed_at TEXT, "
-        "records_in INTEGER, "
-        "records_out INTEGER, "
-        "errors INTEGER, "
-        "status TEXT, "
-        "PRIMARY KEY (run_id, stage_name)"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_run_metrics ({col_str})"
     )
 
 
-def _create_asre_quality_metrics(adapter: IngestAdapter) -> None:
+def _create_asre_quality_metrics(adapter: IngestAdapter, m: DDLTypeMapper) -> None:
+    t = m.text()
+    r = m.real()
+    cpk = m.composite_primary_key(["run_id", "metric_name"])
+
+    cols = [
+        f"run_id {t} NOT NULL",
+        f"metric_name {t} NOT NULL",
+        f"metric_value {r}",
+        f"warn_threshold {r}",
+        f"fail_threshold {r}",
+        f"status {t}",
+        f"computed_at {t}",
+    ]
+    if cpk:
+        cols.append(cpk)
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_quality_metrics ("
-        "run_id TEXT NOT NULL, "
-        "metric_name TEXT NOT NULL, "
-        "metric_value REAL, "
-        "warn_threshold REAL, "
-        "fail_threshold REAL, "
-        "status TEXT, "
-        "computed_at TEXT, "
-        "PRIMARY KEY (run_id, metric_name)"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_quality_metrics ({col_str})"
     )

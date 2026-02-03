@@ -14,6 +14,11 @@ class IngestAdapter(ABC):
     must implement this interface to be used by the ingest pipeline stage.
     """
 
+    @property
+    @abstractmethod
+    def warehouse_type(self) -> str:
+        """Return the warehouse type identifier (e.g., 'postgres', 'snowflake')."""
+
     @abstractmethod
     def connect(self) -> None:
         """Establish connection to the warehouse."""

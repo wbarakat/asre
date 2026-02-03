@@ -29,6 +29,10 @@ class RedshiftAdapter(IngestAdapter):
         self._connection: Any = None
         self._schema: str = config.get("schema", "public")
 
+    @property
+    def warehouse_type(self) -> str:
+        return "redshift"
+
     def connect(self) -> None:
         """Establish connection to Redshift using config credentials."""
         if not _HAS_REDSHIFT:

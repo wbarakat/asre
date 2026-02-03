@@ -71,13 +71,31 @@ class Migrator:
         return int(rows[0]["value"])
 
     def set_schema_version(self, version: int) -> None:
-        """Set the schema version in asre_metadata via upsert."""
-        self._adapter.execute_ddl(
-            "INSERT INTO asre_metadata (key, value) "
-            f"VALUES ('schema_version', '{version}') "
-            "ON CONFLICT (key) DO UPDATE SET value = "
-            f"'{version}'"
-        )
+        """Set the schema version in asre_metadata via warehouse-appropriate upsert."""
+        wt = getattr(self._adapter, "warehouse_type", "postgres")
+        if wt == "redshift":
+            self._adapter.execute_ddl(
+                "DELETE FROM asre_metadata WHERE key = 'schema_version'"
+            )
+            self._adapter.execute_ddl(
+                f"INSERT INTO asre_metadata (key, value) VALUES ('schema_version', '{version}')"
+            )
+        elif wt in ("snowflake", "bigquery"):
+            self._adapter.execute_ddl(
+                "MERGE INTO asre_metadata AS target "
+                f"USING (SELECT 'schema_version' AS key, '{version}' AS value) AS source "
+                "ON target.key = source.key "
+                "WHEN MATCHED THEN UPDATE SET value = source.value "
+                "WHEN NOT MATCHED THEN INSERT (key, value) VALUES (source.key, source.value)"
+            )
+        else:
+            # Postgres (default)
+            self._adapter.execute_ddl(
+                "INSERT INTO asre_metadata (key, value) "
+                f"VALUES ('schema_version', '{version}') "
+                "ON CONFLICT (key) DO UPDATE SET value = "
+                f"'{version}'"
+            )
 
     def discover_migrations(self) -> list[MigrationInfo]:
         """Discover migration scripts in versions/ directory, ordered by version."""

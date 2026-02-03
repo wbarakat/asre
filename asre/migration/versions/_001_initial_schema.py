@@ -17,9 +17,24 @@ def upgrade(adapter: IngestAdapter) -> None:
     - schema_version tracking (migration state)
     - watermark storage (per-source incremental processing state)
     """
+    from asre.migration.ddl_types import DDLTypeMapper
+
+    wt = getattr(adapter, "warehouse_type", "postgres")
+    m = DDLTypeMapper(wt)
+
+    cols = [
+        f"key {m.text()} {'NOT NULL' if wt == 'bigquery' else ''}",
+        f"value {m.text()} NOT NULL",
+    ]
+
+    pk = m.primary_key("key")
+    # For non-bigquery, use PRIMARY KEY constraint on the key column directly
+    if wt != "bigquery":
+        cols[0] = f"key {m.text()} PRIMARY KEY"
+    else:
+        cols[0] = f"key {m.text()} NOT NULL"
+
+    col_str = ", ".join(cols)
     adapter.execute_ddl(
-        "CREATE TABLE IF NOT EXISTS asre_metadata ("
-        "key TEXT PRIMARY KEY, "
-        "value TEXT NOT NULL"
-        ")"
+        f"CREATE TABLE IF NOT EXISTS asre_metadata ({col_str})"
     )

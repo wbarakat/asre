@@ -25,6 +25,10 @@ class SnowflakeAdapter(IngestAdapter):
         self._config = config
         self._connection: Any = None
 
+    @property
+    def warehouse_type(self) -> str:
+        return "snowflake"
+
     def connect(self) -> None:
         """Establish connection to Snowflake using config credentials."""
         if snowflake_connect is None:
