@@ -134,6 +134,74 @@ def scored_encounter_to_encounter(enc: Any) -> Encounter:
     )
 
 
+def _parse_json_field(value: Any) -> Any:
+    """Parse a JSON string field, returning the value as-is if already parsed."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return value
+    return value
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    """Parse an ISO-format datetime string, returning None for null values."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return None
+
+
+def record_to_encounter(record: dict[str, Any]) -> Encounter:
+    """Convert a database record (dict) from admission_events_unified to an Encounter.
+
+    Handles JSON-encoded list fields and ISO datetime strings.
+    """
+    admit_ts_val = _parse_datetime(record["admit_ts"])
+    if admit_ts_val is None:
+        admit_ts_val = datetime.now(tz=timezone.utc)
+
+    return Encounter(
+        encounter_id=record["encounter_id"],
+        patient_key=record["patient_key"],
+        encounter_type=record.get("encounter_type", "outpatient"),
+        status=record.get("status", "open"),
+        admit_ts=admit_ts_val,
+        discharge_ts=_parse_datetime(record.get("discharge_ts")),
+        los_hours=record.get("los_hours"),
+        facility_canonical_id=record.get("facility_canonical_id", ""),
+        facility_name=record.get("facility_name", ""),
+        is_acute=bool(record.get("is_acute", False)),
+        source_event_ids=_parse_json_field(record.get("source_event_ids")) or [],
+        source_systems=_parse_json_field(record.get("source_systems")) or [],
+        has_adt=bool(record.get("has_adt", False)),
+        has_claims=bool(record.get("has_claims", False)),
+        has_auth=bool(record.get("has_auth", False)),
+        confidence_score=float(record.get("confidence_score", 0.0)),
+        confidence_flags=_parse_json_field(record.get("confidence_flags")) or [],
+        created_at=_parse_datetime(record.get("created_at")) or datetime.now(tz=timezone.utc),
+        updated_at=_parse_datetime(record.get("updated_at")) or datetime.now(tz=timezone.utc),
+        asre_version=record.get("asre_version", "0.1.0"),
+        admit_source_priority=record.get("admit_source_priority"),
+        discharge_source_priority=record.get("discharge_source_priority"),
+        payer_id=record.get("payer_id"),
+        drg=record.get("drg"),
+        principal_diagnosis=record.get("principal_diagnosis"),
+        admitting_diagnosis=record.get("admitting_diagnosis"),
+        diagnosis_codes=_parse_json_field(record.get("diagnosis_codes")),
+        is_readmission=record.get("is_readmission"),
+        readmission_days=record.get("readmission_days"),
+        obs_to_ip_conversion=record.get("obs_to_ip_conversion"),
+        transfer_chain=_parse_json_field(record.get("transfer_chain")),
+        episode_id=record.get("episode_id"),
+    )
+
+
 def _episode_to_record(episode: Episode) -> dict[str, Any]:
     """Convert an Episode dataclass to a flat dict for database storage."""
     return {

@@ -426,6 +426,122 @@ def inspect_errors(last_run: bool, config_path: str, customer_id: str) -> None:
         sys.exit(1)
 
 
+@cli.group("episodes", invoke_without_command=True)
+@click.option(
+    "--recompute",
+    is_flag=True,
+    default=False,
+    help="Recompute episodes from materialized encounters without re-running full pipeline.",
+)
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+@click.pass_context
+def episodes(
+    ctx: click.Context,
+    recompute: bool,
+    config_path: str,
+    customer_id: str,
+) -> None:
+    """Manage episode computation."""
+    ctx.ensure_object(dict)
+    ctx.obj["config_path"] = config_path
+    ctx.obj["customer_id"] = customer_id
+
+    if recompute:
+        _recompute_episodes(config_path, customer_id)
+    elif ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+def _recompute_episodes(config_path: str, customer_id: str) -> None:
+    """Recompute episodes from materialized encounters.
+
+    Reads encounters from admission_events_unified, then runs only the
+    three episode stages (stitch, materialize, quality) without re-running
+    ingest, canonicalize, stitch, dedup, reconcile, or score.
+    """
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            # Read all encounters from admission_events_unified
+            records: list[dict[str, Any]] = adapter.read_source(
+                "admission_events_unified",
+                "SELECT * FROM admission_events_unified",
+            )
+
+            if not records:
+                click.echo("No encounters found. Nothing to recompute.")
+                return
+
+            # Convert DB records to Encounter objects
+            from asre.episode.stage import (
+                EpisodeMaterializeStage,
+                EpisodeQualityStage,
+                EpisodeStitchStage,
+                record_to_encounter,
+            )
+            from asre.models.batch import EventBatch
+            from asre.pipeline.runner import PipelineContext
+
+            encounters = [record_to_encounter(r) for r in records]
+
+            # Load episode stitching config if available
+            global_config = load_config(config_path, customer_id)
+            ep_config: dict[str, Any] = {}
+            if hasattr(global_config, "episode_stitching"):
+                ep_config["episode_stitching"] = global_config.episode_stitching
+            ep_config["adapter"] = adapter
+
+            # Build pipeline context
+            from datetime import datetime, timezone
+
+            run_id = f"recompute_{datetime.now(tz=timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+            context = PipelineContext(
+                run_id=run_id,
+                config=ep_config,
+                mode="recompute",
+            )
+            batch = EventBatch(batch_id=run_id, events=[])
+
+            # Run episode stitch
+            stitch_stage = EpisodeStitchStage()
+            stitch_stage.encounters_in = encounters
+            stitch_stage.run(batch, context)
+
+            # Run episode materialize
+            materialize_stage = EpisodeMaterializeStage()
+            materialize_stage.episodes_in = list(stitch_stage.episodes)
+            materialize_stage.run(batch, context)
+
+            # Run episode quality
+            quality_stage = EpisodeQualityStage()
+            quality_stage.episodes_in = list(stitch_stage.episodes)
+            quality_stage.run(batch, context)
+
+            click.echo(
+                f"Episode recomputation complete: "
+                f"{len(encounters)} encounters -> "
+                f"{quality_stage.episode_count} episodes, "
+                f"readmission_rate={quality_stage.readmission_rate:.2f}, "
+                f"mean_confidence={quality_stage.mean_confidence:.2f}"
+            )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
 @cli.group("facilities", invoke_without_command=True)
 @click.option(
     "--unresolved",
