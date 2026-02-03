@@ -240,7 +240,8 @@ class PipelineRunner:
 
         self.stage_metrics = []
 
-        for idx, stage_name in enumerate(_STAGE_ORDER):
+        stage_names = list(self._stages.keys())
+        for idx, stage_name in enumerate(stage_names):
             # Skip stages that were already completed in a prior run
             if idx <= skip_through_index:
                 logger.info(
@@ -260,7 +261,7 @@ class PipelineRunner:
                     # Record the failure — last_completed_stage is the
                     # previous stage (idx-1), but we store the failing
                     # stage name so resume knows where to retry.
-                    prev_stage = _STAGE_ORDER[idx - 1] if idx > 0 else stage_name
+                    prev_stage = stage_names[idx - 1] if idx > 0 else stage_name
                     checkpoint_mgr.mark_failed(
                         run_id=self.run_id,
                         stage_name=prev_stage,
@@ -276,6 +277,9 @@ class PipelineRunner:
             # Collect metrics
             if hasattr(stage, "metrics") and hasattr(stage.metrics, "to_dict"):
                 self.stage_metrics.append(stage.metrics.to_dict())
+
+            # Check error tolerance after each stage
+            self._check_error_tolerance()
 
             # Save checkpoint after successful stage
             if checkpoint_mgr is not None:
@@ -298,6 +302,41 @@ class PipelineRunner:
             "mode": self.mode,
             "stages_completed": len(self.stage_metrics),
         }
+
+    def _get_fail_threshold(self) -> float:
+        """Get the failed_event_rate_fail threshold from config."""
+        alerting = self._config.get("alerting", {})
+        if hasattr(alerting, "thresholds"):
+            # Pydantic model
+            thresholds = alerting.thresholds
+        elif isinstance(alerting, dict):
+            thresholds = alerting.get("thresholds", {})
+        else:
+            thresholds = {}
+
+        if isinstance(thresholds, dict):
+            return float(thresholds.get("failed_event_rate_fail", 0.05))
+        return 0.05
+
+    def _check_error_tolerance(self) -> None:
+        """Check cumulative failed event rate across all completed stages.
+
+        Raises FailedEventRateExceededError if rate >= threshold.
+        """
+        from asre.pipeline.error_tolerance import ErrorToleranceChecker
+
+        total_in = 0
+        total_errors = 0
+        for m in self.stage_metrics:
+            total_in += m.get("records_in", 0)
+            total_errors += m.get("errors", 0)
+
+        if total_in == 0:
+            return
+
+        threshold = self._get_fail_threshold()
+        checker = ErrorToleranceChecker(fail_threshold=threshold)
+        checker.check(failed=total_errors, total=total_in)
 
     def _handoff(
         self,
