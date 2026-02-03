@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- SnowflakeAdapter in `asre/ingest/snowflake.py`: uses snowflake-connector-python with try/except ImportError for optional dependency; uses cursor-based API (not SQLAlchemy); MERGE for upsert (not ON CONFLICT); %s parameter style; JSON-serializes dict/list values for VARIANT/ARRAY columns in write_records; mypy config has `[[tool.mypy.overrides]] module = "snowflake.*" ignore_missing_imports = true`
+- BigQueryAdapter in `asre/ingest/bigquery.py`: uses google-cloud-bigquery with try/except ImportError for optional dependency; uses client.query() API; MERGE for upsert; @param parameterized queries via QueryJobConfig + ScalarQueryParameter; JSON type literal for dict/list values in INSERT; _make_job_config() helper method for parameterized queries; dataset prefix on table names (`dataset.table`); backtick-quoted identifiers; mypy override for `google.*`
+- For warehouse adapter tests without the SDK installed: patch module-level `_HAS_BIGQUERY`/`QueryJobConfig`/`ScalarQueryParameter` variables; use `_make_row_mock()` helper that implements dict-like interface for BigQuery Row objects
 - Episode stages in `asre/episode/stage.py`: EpisodeStitchStage (encounters_in -> episodes), EpisodeMaterializeStage (episodes_in -> asre_episodes table + episode_id FK update), EpisodeQualityStage (episodes_in -> episode_count, readmission_rate, mean_confidence)
 - `record_to_encounter(record: dict) -> Encounter` in `asre/episode/stage.py`: converts DB row from admission_events_unified back to Encounter dataclass; handles JSON string fields (source_event_ids, source_systems, confidence_flags, diagnosis_codes, transfer_chain) and ISO datetime parsing
 - `asre episodes --recompute` CLI command in `asre/cli/main.py`: reads all encounters from admission_events_unified via adapter, converts with record_to_encounter(), runs only episode stages (stitch, materialize, quality); uses _get_diagnostic_adapter for DB access and load_config for episode_stitching config
@@ -1784,4 +1787,44 @@
   - `_get_diagnostic_adapter` pattern is reusable for any CLI command needing read-only DB access
   - JSON fields in admission_events_unified (source_event_ids, source_systems, confidence_flags, diagnosis_codes, transfer_chain) are stored as JSON strings; must parse with json.loads() when converting back to Encounter objects
   - CLI group commands requiring `--config-path`/`--customer-id` will error (exit code 2) when invoked without those options, even for help — test `--help` instead
+---
+
+## 2026-02-02 - US-097
+- Implemented SnowflakeAdapter in `asre/ingest/snowflake.py` implementing IngestAdapter
+- Uses snowflake-connector-python with graceful ImportError handling (optional dependency)
+- Cursor-based API: connect via `snowflake.connector.connect()`, execute via cursor
+- VARIANT/ARRAY handling: read_source returns raw values (JSON strings from Snowflake); write_records JSON-serializes dict/list values
+- MERGE statement for watermark upsert (Snowflake doesn't support ON CONFLICT)
+- %s parameter style (snowflake-connector convention)
+- Optional `role` parameter in connection config
+- Files changed:
+  - `asre/ingest/snowflake.py` - New Snowflake adapter (175 lines)
+  - `tests/unit/test_snowflake_adapter.py` - 22 unit tests covering connection, read, write, DDL, watermark, VARIANT/ARRAY handling
+  - `pyproject.toml` - Added `snowflake` optional dependency group + mypy override for snowflake module
+  - `prd.json` - Marked US-097 as passes: true
+- **Learnings for future iterations:**
+  - For optional warehouse adapters, use try/except ImportError pattern with `ignore_missing_imports` in mypy config (no type: ignore comments needed)
+  - Snowflake uses cursor-based API, not SQLAlchemy — cursor.description gives column names, fetchall gives tuples
+  - Snowflake uses MERGE for upsert (not ON CONFLICT like Postgres)
+  - Snowflake uses %s parameter style (not :named like SQLAlchemy)
+  - Dict/list values must be JSON-serialized before INSERT for VARIANT/ARRAY columns
+---
+
+## 2026-02-02 - US-098
+- What was implemented: BigQuery adapter implementing IngestAdapter interface using google-cloud-bigquery library
+- Files changed:
+  - `asre/ingest/bigquery.py` - New BigQuery adapter with connect/disconnect, read_source, write_records, execute_ddl, get/set watermark; handles JSON/STRUCT and ARRAY column types; uses MERGE for upsert; parameterized queries via QueryJobConfig
+  - `tests/unit/test_bigquery_adapter.py` - 28 unit tests covering connection, read, write, DDL, watermark, JSON/ARRAY handling, import error handling
+  - `pyproject.toml` - Added mypy override for `google.*` module
+  - `prd.json` - Marked US-098 as passes: true
+- **Learnings for future iterations:**
+  - BigQuery uses client.query() API (not cursor-based like Snowflake or SQLAlchemy like Postgres)
+  - BigQuery uses MERGE for upsert, same as Snowflake
+  - BigQuery parameterized queries use @param syntax with QueryJobConfig + ScalarQueryParameter
+  - BigQuery returns JSON/STRUCT as native Python dicts and ARRAY as native lists (unlike Snowflake which returns JSON strings)
+  - For INSERT with complex types, use `JSON 'serialized_value'` literal syntax
+  - Table names need dataset prefix with backtick quoting: `dataset.table_name`
+  - When using try/except ImportError for optional deps, import ALL needed classes at top level to avoid inline imports that fail without the library
+  - Use `_HAS_BIGQUERY` boolean flag pattern + patching in tests instead of `type: ignore` comments
+  - `replace_all` in Edit tool can join lines when the replaced text includes trailing content — be careful with bulk replacements
 ---

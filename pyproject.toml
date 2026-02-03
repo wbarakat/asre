@@ -45,6 +45,10 @@ warn_unused_configs = true
 module = "snowflake.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "google.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
