@@ -1718,3 +1718,14 @@
   - _match_prefix strips dots and uppercases before comparison — prefixes are stored without dots
   - Test "unknown code" should use a numeric prefix (e.g., "999.99") rather than a letter prefix since all ICD-10 chapters start with A-Z and would match medical catch-all
 ---
+## 2026-02-02 - US-093
+- What was implemented: EpisodeScorer class with LOS-weighted mean confidence scoring
+- Files changed:
+  - asre/episode/episode_scorer.py (new) — EpisodeScorer.compute_score()
+  - tests/unit/test_episode_scorer.py (new) — 6 tests covering weighted mean, zero/null LOS, single encounter, empty list
+  - prd.json — marked US-093 passes: true
+- **Learnings for future iterations:**
+  - EpisodeScorer.compute_score() takes list[Encounter], returns float; uses los_hours as weight with 1h minimum for zero/null LOS
+  - _MIN_WEIGHT_HOURS = 1.0 constant in episode_scorer.py for the fallback weight
+  - Pattern: episode scoring is separate from encounter scoring (ConfidenceScorer); episode score aggregates encounter scores
+---
