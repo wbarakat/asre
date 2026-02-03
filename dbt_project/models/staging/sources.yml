@@ -15,3 +15,5 @@ sources:
         description: "Per-stage timing and throughput metrics, written by RunMetricsWriter"
       - name: asre_quality_metrics
         description: "Per-run quality metrics with pass/warn/fail status, written by QualityCheckStage"
+      - name: asre_episodes
+        description: "Episode-level view with encounters grouped by care episode, written by EpisodeMaterializeStage"

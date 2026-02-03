@@ -72,6 +72,9 @@ _STAGE_ORDER: list[str] = [
     "score",
     "materialize",
     "quality_check",
+    "episode_stitch",
+    "episode_materialize",
+    "episode_quality",
 ]
 
 
@@ -146,6 +149,21 @@ class PipelineRunner:
         from asre.quality.stage import QualityCheckStage
 
         stages["quality_check"] = QualityCheckStage()
+
+        # Episode Stitch
+        from asre.episode.stage import EpisodeStitchStage
+
+        stages["episode_stitch"] = EpisodeStitchStage()
+
+        # Episode Materialize
+        from asre.episode.stage import EpisodeMaterializeStage
+
+        stages["episode_materialize"] = EpisodeMaterializeStage()
+
+        # Episode Quality
+        from asre.episode.stage import EpisodeQualityStage
+
+        stages["episode_quality"] = EpisodeQualityStage()
 
         return stages
 
@@ -396,3 +414,31 @@ class PipelineRunner:
             if hasattr(stage, "encounters_updated"):
                 context.config["encounters_updated"] = stage.encounters_updated
             context.config["stage_metrics"] = list(self.stage_metrics)
+
+        elif stage_name == "quality_check":
+            # Convert scored encounters to Encounter objects for episode stitching
+            episode_stitch = self._stages.get("episode_stitch")
+            scored = context.config.get("scored_encounters", [])
+            if scored and hasattr(episode_stitch, "encounters_in"):
+                from asre.episode.stage import scored_encounter_to_encounter
+
+                episode_stitch.encounters_in = [  # type: ignore[union-attr]
+                    scored_encounter_to_encounter(e) for e in scored
+                ]
+
+        elif stage_name == "episode_stitch":
+            # Pass episodes to episode materialize
+            ep_materialize = self._stages.get("episode_materialize")
+            if hasattr(stage, "episodes") and hasattr(ep_materialize, "episodes_in"):
+                ep_materialize.episodes_in = stage.episodes  # type: ignore[union-attr]
+
+        elif stage_name == "episode_materialize":
+            # Pass episodes to episode quality stage
+            ep_quality = self._stages.get("episode_quality")
+            ep_stitch = self._stages.get("episode_stitch")
+            if (
+                ep_stitch is not None
+                and hasattr(ep_stitch, "episodes")
+                and hasattr(ep_quality, "episodes_in")
+            ):
+                ep_quality.episodes_in = ep_stitch.episodes  # type: ignore[union-attr]

@@ -27,6 +27,12 @@ models:
         tests:
           - accepted_values:
               values: ['inpatient', 'observation', 'ed_only', 'outpatient']
+      - name: episode_id
+        description: "Reference to parent episode"
+        tests:
+          - relationships:
+              to: ref('asre_episodes')
+              field: episode_id
 
   - name: asre_encounters_detail
     description: "Event-level detail with role classifications"
@@ -71,3 +77,26 @@ models:
         description: "Quality metric name"
         tests:
           - not_null
+
+  - name: asre_episodes
+    description: "Episode-level view with encounters grouped by care episode"
+    columns:
+      - name: episode_id
+        description: "Deterministic episode identifier"
+        tests:
+          - unique
+          - not_null
+      - name: patient_key
+        description: "Patient identifier"
+        tests:
+          - not_null
+      - name: episode_type
+        description: "Episode type classification"
+        tests:
+          - not_null
+      - name: episode_status
+        description: "Episode status"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['active', 'closed', 'reopened']

@@ -108,7 +108,7 @@ class TestMigrationExecution:
         """Migrations with version <= current schema_version are skipped."""
         adapter = MagicMock()
         # Schema version already at highest migration version
-        adapter.read_source.return_value = [{"value": "3"}]
+        adapter.read_source.return_value = [{"value": "4"}]
         migrator = Migrator(adapter)
 
         result = migrator.run()
