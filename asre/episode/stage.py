@@ -300,12 +300,26 @@ class EpisodeMaterializeStage(PipelineStage):
         self.episodes_updated: int = 0
 
     def run(self, batch: EventBatch, context: PipelineContext) -> EventBatch:
-        """Execute episode materialization."""
+        """Execute episode materialization.
+
+        When dry_run=True in context.config, skips all DB writes and
+        logs what would be written instead.
+        """
         self.metrics = StageMetrics("episode_materialize", context.run_id)
 
         with self.metrics:
             episodes = list(self.episodes_in)
             self.metrics.records_in = len(episodes)
+
+            dry_run: bool = context.config.get("dry_run", False)
+            if dry_run:
+                logger.info(
+                    "Dry-run mode: would materialize %d episodes "
+                    "(skipping DB writes)",
+                    len(episodes),
+                )
+                self.metrics.records_out = 0
+                return batch
 
             adapter = context.config.get("adapter")
             if adapter is None:

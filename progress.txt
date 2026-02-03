@@ -1916,3 +1916,14 @@
   - The Migrator.run() handles both fresh installs (version 0) and upgrades; _run_auto_migration adds user-facing messaging and short-circuits when schema is current
   - Migration failure propagates as an exception through the CLI, causing non-zero exit code — no special handling needed
 ---
+
+## 2026-02-02 - US-104
+- What was implemented: Dry-run mode — pipeline runs all stages but skips materialization (no writes to output tables), logs what would be written
+- Files changed: asre/materialize/stage.py (added dry_run check before writes), asre/quality/stage.py (added dry_run check before DB writes/watermark), asre/episode/stage.py (added dry_run check in EpisodeMaterializeStage), asre/cli/main.py (added --dry-run flag with ASRE_DRY_RUN env var, passed to _create_pipeline_runner), tests/unit/test_dry_run.py (new, 9 tests), prd.json (updated)
+- **Learnings for future iterations:**
+  - Dry-run check is early-return in each materialization stage: check `context.config.get("dry_run", False)` before any adapter calls
+  - Three stages need dry-run guards: MaterializeStage, QualityCheckStage (skips writes + watermark), EpisodeMaterializeStage
+  - QualityCheckStage still computes metrics and evaluates thresholds in dry-run — only DB writes and alerts are skipped
+  - CLI dry_run is passed through _create_pipeline_runner as a kwarg, which sets pipeline_config["dry_run"] = True
+  - Click's envvar parameter on is_flag option handles ASRE_DRY_RUN=true automatically
+---

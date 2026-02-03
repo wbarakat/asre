@@ -101,6 +101,7 @@ def _create_pipeline_runner(
     config_path: str,
     customer_id: str,
     mode: str,
+    dry_run: bool = False,
 ) -> Any:
     """Create a PipelineRunner from customer config.
 
@@ -144,6 +145,9 @@ def _create_pipeline_runner(
     # Auto-migrate schema before pipeline execution
     _run_auto_migration(adapter)
 
+    if dry_run:
+        pipeline_config["dry_run"] = True
+
     return PipelineRunner(config=pipeline_config, mode=mode)
 
 
@@ -161,6 +165,14 @@ def _create_pipeline_runner(
     help="Resume a previously failed run by its run_id.",
 )
 @click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    envvar="ASRE_DRY_RUN",
+    help="Run pipeline without writing to output tables.",
+)
+@click.option(
     "--config-path",
     envvar="ASRE_CONFIG_PATH",
     required=True,
@@ -175,6 +187,7 @@ def _create_pipeline_runner(
 def run_pipeline(
     mode: str,
     resume_run_id: str | None,
+    dry_run: bool,
     config_path: str,
     customer_id: str,
 ) -> None:
@@ -184,6 +197,7 @@ def run_pipeline(
             config_path=config_path,
             customer_id=customer_id,
             mode=mode,
+            dry_run=dry_run,
         )
         result: dict[str, Any] = runner.run(resume_run_id=resume_run_id)
         click.echo(

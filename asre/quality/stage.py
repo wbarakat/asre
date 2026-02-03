@@ -40,7 +40,11 @@ class QualityCheckStage(PipelineStage):
         self.metric_statuses: dict[str, str] = {}
 
     def run(self, batch: EventBatch, context: PipelineContext) -> EventBatch:
-        """Execute the quality check stage."""
+        """Execute the quality check stage.
+
+        When dry_run=True in context.config, computes metrics and evaluates
+        thresholds but skips DB writes and watermark updates.
+        """
         self.metrics = StageMetrics("quality_check", context.run_id)
 
         with self.metrics:
@@ -50,6 +54,7 @@ class QualityCheckStage(PipelineStage):
             )
             encounters_created: int = context.config.get("encounters_created", 0)
             encounters_updated: int = context.config.get("encounters_updated", 0)
+            dry_run: bool = context.config.get("dry_run", False)
 
             self.metrics.records_in = len(encounters)
 
@@ -69,6 +74,17 @@ class QualityCheckStage(PipelineStage):
             self.metric_statuses = computer.evaluate_thresholds(
                 self.computed_metrics, thresholds
             )
+
+            if dry_run:
+                logger.info(
+                    "Dry-run mode: computed %d quality metrics "
+                    "(skipping DB writes and watermark update). "
+                    "Metrics: %s",
+                    len(self.computed_metrics),
+                    self.computed_metrics,
+                )
+                self.metrics.records_out = len(self.computed_metrics)
+                return batch
 
             # 3. Fire alerts
             webhook_urls: list[str] = alerting_cfg.get("webhook_urls", [])

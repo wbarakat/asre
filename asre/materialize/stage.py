@@ -267,6 +267,9 @@ class MaterializeStage(PipelineStage):
 
         Converts scored encounters to records and writes them to the
         admission_events_unified table using merge/upsert.
+
+        When dry_run=True in context.config, skips all DB writes and
+        logs what would be written instead.
         """
         self.metrics = StageMetrics("materialize", context.run_id)
 
@@ -274,8 +277,18 @@ class MaterializeStage(PipelineStage):
             encounters = list(self.encounters_in)
             self.metrics.records_in = len(encounters)
 
+            dry_run: bool = context.config.get("dry_run", False)
             adapter = context.config.get("adapter")
             now = datetime.now(tz=timezone.utc)
+
+            if dry_run:
+                logger.info(
+                    "Dry-run mode: would materialize %d encounters "
+                    "(skipping DB writes)",
+                    len(encounters),
+                )
+                self.metrics.records_out = 0
+                return batch
 
             if adapter is None:
                 logger.warning(
