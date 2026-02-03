@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- ConditionGrouper ABC in `asre/groupers/base.py`: abstract group(diagnosis_codes, drg) -> str; valid return values in VALID_EPISODE_TYPES frozenset: surgical, medical, chronic_exacerbation, maternity, behavioral_health, unclassified; diagnosis_codes param is list[dict[str, str | None]] with keys code, type, sequence, poa
 - EpisodeStitcher in `asre/episode/episode_stitcher.py`: stitch(encounters) returns list[_EpisodeGroup]; partitions by patient_key, sorts by admit_ts, checks 4 linkage rules in order: readmission (both acute, within window), post-acute (prior acute, current non-acute, within window), ED bounce-back (current ed_only, within window), planned return (same facility, within window but beyond readmission window for acute-to-acute); _EpisodeGroup accumulates encounter_ids and encounters; linkage checks against last discharged encounter in group
 - _EpisodeGroup tracks `includes_readmission: bool` (default False), `includes_post_acute: bool` (default False), `episode_id: str` (default ""); _try_link() returns linkage type string ("readmission", "post_acute", "ed_bounceback", "planned_return") or None
 - `generate_episode_id(first_encounter_id: str) -> str` in episode_stitcher.py: SHA-256 of "episode|{first_encounter_id}" — use for deterministic episode IDs; called at end of stitch() to populate _EpisodeGroup.episode_id
@@ -1686,4 +1687,17 @@
   - _EpisodeGroup now has episode_id: str field (default ""), populated after stitch completes
   - Domain separator "episode|" in hash input prevents collision with encounter IDs
   - Total test count: 1188 passed (1180 existing + 8 new)
+---
+
+## 2026-02-02 - US-091
+- What was implemented: ConditionGrouper ABC in asre/groupers/base.py — abstract interface for episode type classification with pluggable implementations
+- Files changed:
+  - asre/groupers/__init__.py (new, empty)
+  - asre/groupers/base.py (new, ConditionGrouper ABC)
+  - tests/unit/test_condition_grouper.py (new, 5 tests)
+  - prd.json (US-091 passes: true)
+- **Learnings for future iterations:**
+  - When using dict literals in tests with strict mypy, annotate with explicit type (e.g., `list[dict[str, str | None]]`) to avoid `dict[str, str]` vs `dict[str, str | None]` incompatibility
+  - The groupers/ package follows same empty __init__.py pattern as other ASRE packages
+  - VALID_EPISODE_TYPES uses frozenset for immutability — subclasses should validate their return values against it
 ---
