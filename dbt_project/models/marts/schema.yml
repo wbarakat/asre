@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: admission_events_unified
+    description: "Encounter-level unified view with confidence scores"
+    columns:
+      - name: encounter_id
+        description: "Deterministic encounter identifier"
+        tests:
+          - unique
+          - not_null
+      - name: patient_key
+        description: "Patient identifier"
+        tests:
+          - not_null
+      - name: admit_ts
+        description: "Admission timestamp from highest-priority source"
+        tests:
+          - not_null
+      - name: status
+        description: "Encounter status"
+        tests:
+          - accepted_values:
+              values: ['open', 'closed', 'cancelled']
+      - name: encounter_type
+        description: "Encounter type classification"
+        tests:
+          - accepted_values:
+              values: ['inpatient', 'observation', 'ed_only', 'outpatient']
+
+  - name: asre_encounters_detail
+    description: "Event-level detail with role classifications"
+    columns:
+      - name: encounter_id
+        description: "Reference to parent encounter"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('admission_events_unified')
+              field: encounter_id
+
+  - name: asre_audit_log
+    description: "Pipeline modification audit trail"
+    columns:
+      - name: log_id
+        description: "Unique audit log entry identifier"
+        tests:
+          - unique
+          - not_null
+
+  - name: asre_run_metrics
+    description: "Per-stage timing and throughput metrics"
+    columns:
+      - name: run_id
+        description: "Pipeline run identifier"
+        tests:
+          - not_null
+      - name: stage_name
+        description: "Pipeline stage name"
+        tests:
+          - not_null

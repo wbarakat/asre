@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- dbt schema tests defined in `dbt_project/models/marts/schema.yml` (version 2 format); generic tests (unique, not_null, accepted_values, relationships) applied per-column; relationships test uses `to: ref('model_name')` and `field: column_name`
 - QualityMetricComputer in `asre/quality/metrics.py`: compute() takes encounters + stage_metrics + counts, returns dict[str, float] of 12 metrics; to_records() converts to list of row dicts for asre_quality_metrics table; flag-based rates use _FLAG_METRIC_MAP for flag->metric_key mapping; low_confidence_rate uses < 0.60 threshold
 - Migration scripts in `asre/migration/versions/` follow `_NNN_description.py` naming; each has `description` attr and `upgrade(adapter)` function; use `CREATE TABLE IF NOT EXISTS` for idempotency; when adding new migrations, update hardcoded version assertions in `tests/unit/test_migrator.py` and `tests/integration/test_migrator_integration.py`
 - CLI diagnostic commands in `asre/cli/main.py`: `status`, `inspect run/encounter/errors`; each subcommand has its own `--config-path`/`--customer-id` options (not on parent group) for flexible CLI/test invocation; `_get_diagnostic_adapter()` creates connected adapter for read-only queries
@@ -1580,4 +1581,31 @@
   - Fail check happens before warn check — a metric at/above fail threshold is "fail", not "warn"
   - to_records() is backwards-compatible: statuses param is optional, old callers get records without status field
   - Total test count: 1100 passed (unit tests)
+---
+
+## 2026-02-02 - US-083
+- What was implemented: Alerter class in `asre/quality/alerter.py` that fires HTTP POST webhooks when quality metrics breach warn/fail thresholds
+- Files changed:
+  - `asre/quality/alerter.py` (new) - Alerter class with build_payload() and fire() methods
+  - `tests/unit/test_alerter.py` (new) - 17 unit tests covering payload construction, PHI absence, webhook delivery, retries, partial success
+- **Learnings for future iterations:**
+  - Alerter uses stdlib `urllib.request` (no external HTTP dependency needed)
+  - `_WEBHOOK_TIMEOUT_SECONDS = 5` and `_WEBHOOK_RETRIES = 1` are module-level constants
+  - `build_payload()` returns None when no alerts needed (all metrics passing)
+  - `fire()` returns bool indicating at least one successful delivery
+  - Webhook failures are logged but never raise — alerting must not block the pipeline
+  - Payload contains only: run_id, run_ts, alerts[{metric, value, threshold, severity}] — ZERO PHI
+---
+
+## 2026-02-02 - US-084
+- What was implemented: dbt schema tests for output table integrity
+- Files changed:
+  - `dbt_project/models/marts/schema.yml` (new) — defines dbt generic tests for all 4 mart models
+  - `tests/unit/test_dbt_schema_tests.py` (new) — 13 pytest tests verifying schema YAML correctness
+- **Learnings for future iterations:**
+  - dbt schema tests are defined in `schema.yml` files alongside models (version 2 format)
+  - Generic tests: `unique`, `not_null`, `accepted_values`, `relationships` are built-in dbt tests
+  - `relationships` test config uses `to: ref('model_name')` and `field: column_name`
+  - For mypy strict: `yaml.safe_load()` returns `Any`, so assign to typed local variable before returning
+  - Schema YAML also covers `asre_audit_log` and `asre_run_metrics` with basic not_null tests
 ---
