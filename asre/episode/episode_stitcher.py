@@ -34,6 +34,7 @@ class _EpisodeGroup:
     encounter_ids: list[str] = field(default_factory=list)
     encounters: list[Encounter] = field(default_factory=list)
     patient_key: str = ""
+    includes_readmission: bool = False
 
     @property
     def last_encounter(self) -> Encounter:
@@ -92,9 +93,11 @@ class EpisodeStitcher:
         groups.append(current)
 
         for enc in encounters[1:]:
-            linked = self._try_link(current, enc)
-            if linked:
+            linkage = self._try_link(current, enc)
+            if linkage is not None:
                 current.add(enc)
+                if linkage == "readmission":
+                    current.includes_readmission = True
             else:
                 current = _EpisodeGroup()
                 current.add(enc)
@@ -102,9 +105,10 @@ class EpisodeStitcher:
 
         return groups
 
-    def _try_link(self, group: _EpisodeGroup, enc: Encounter) -> bool:
+    def _try_link(self, group: _EpisodeGroup, enc: Encounter) -> str | None:
         """Check if enc should link to the current episode group.
 
+        Returns the linkage rule name if linked, or None if not linked.
         Checks against the last encounter in the group that has a discharge_ts,
         since linkage requires a prior discharge timestamp.
         """
@@ -112,27 +116,27 @@ class EpisodeStitcher:
         prior = self._last_discharged(group)
         if prior is None:
             # No discharged encounter to link from
-            return False
+            return None
 
         gap = enc.admit_ts - prior.discharge_ts  # type: ignore[operator]
 
         # Rule 1: Readmission linkage (both must be acute)
         if self._is_readmission_link(prior, enc, gap):
-            return True
+            return "readmission"
 
         # Rule 2: Post-acute linkage (prior acute, current non-acute)
         if self._is_post_acute_link(prior, enc, gap):
-            return True
+            return "post_acute"
 
         # Rule 3: ED bounce-back linkage
         if self._is_ed_bounceback_link(enc, gap):
-            return True
+            return "ed_bounceback"
 
         # Rule 4: Planned return (same facility)
         if self._is_planned_return_link(prior, enc, gap):
-            return True
+            return "planned_return"
 
-        return False
+        return None
 
     def _last_discharged(self, group: _EpisodeGroup) -> Encounter | None:
         """Return the last encounter in the group that has a discharge_ts."""
