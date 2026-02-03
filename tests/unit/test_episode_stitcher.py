@@ -395,6 +395,60 @@ class TestEdBounceback:
 
         assert len(episodes) == 2
 
+    def test_ed_bounceback_ac_discharge_jan1_ed_jan4_same_episode(self) -> None:
+        """AC: discharge Jan 1, ED visit Jan 4 produces same episode (3 days < 7)."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2023, 12, 28, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 14, 0, tzinfo=timezone.utc),
+            encounter_type="inpatient",
+            is_acute=True,
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 4, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 4, 18, 0, tzinfo=timezone.utc),
+            encounter_type="ed_only",
+            is_acute=True,
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2])
+
+        assert len(episodes) == 1
+        assert set(episodes[0].encounter_ids) == {"enc-1", "enc-2"}
+
+    def test_ed_bounceback_ac_discharge_jan1_ed_jan10_separate(self) -> None:
+        """AC: discharge Jan 1, ED visit Jan 10 produces different episodes (9 days > 7)."""
+        from asre.episode.episode_stitcher import EpisodeStitcher
+
+        # Non-acute prior + different facility to prevent readmission/planned-return rules
+        enc1 = _make_encounter(
+            "enc-1",
+            "PAT-A",
+            datetime(2023, 12, 28, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 14, 0, tzinfo=timezone.utc),
+            encounter_type="inpatient",
+            is_acute=False,
+            facility_canonical_id="FAC-001",
+        )
+        enc2 = _make_encounter(
+            "enc-2",
+            "PAT-A",
+            datetime(2024, 1, 10, 10, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 10, 18, 0, tzinfo=timezone.utc),
+            encounter_type="ed_only",
+            is_acute=True,
+            facility_canonical_id="FAC-ED",
+        )
+        stitcher = EpisodeStitcher()
+        episodes = stitcher.stitch([enc1, enc2])
+
+        assert len(episodes) == 2
+
 
 # ---------------------------------------------------------------------------
 # Planned return linkage (default 90 days)
