@@ -11,7 +11,7 @@
         "pyproject.toml declares Python 3.11+ requirement",
         "Dependencies include: pydantic, pyyaml, click, rapidfuzz, dbt-core, dbt-postgres, sqlalchemy, psycopg2-binary, pytest, pytest-syrupy",
         "pip install -e . succeeds",
-        "Project follows structure from SPEC §16",
+        "Project follows structure from SPEC \u00a716",
         "Typecheck passes",
         "Tests pass"
       ],
@@ -24,7 +24,7 @@
       "title": "Define CanonicalEvent dataclass",
       "description": "As a developer, I need the canonical event schema as a Python dataclass so all pipeline stages share a contract.",
       "acceptanceCriteria": [
-        "asre/models/canonical_event.py defines CanonicalEvent with all fields from SPEC §3.2",
+        "asre/models/canonical_event.py defines CanonicalEvent with all fields from SPEC \u00a73.2",
         "Fields: event_id, patient_key, event_type, event_ts, source_system, source_record_id, facility_raw, facility_canonical_id, admit_flag, discharge_flag, auth_flag, patient_class, drg, principal_diagnosis, diagnosis_codes, auth_status, payer_id, ingested_at, batch_id, _raw_payload",
         "Proper types: str, bool, datetime, Optional where nullable in spec",
         "Dataclass is importable: from asre.models.canonical_event import CanonicalEvent",
@@ -41,7 +41,7 @@
       "title": "Define Encounter dataclass",
       "description": "As a developer, I need the encounter output schema as a Python dataclass matching admission_events_unified.",
       "acceptanceCriteria": [
-        "asre/models/encounter.py defines Encounter with all fields from SPEC §3.4 (admission_events_unified)",
+        "asre/models/encounter.py defines Encounter with all fields from SPEC \u00a73.4 (admission_events_unified)",
         "Fields include: encounter_id, patient_key, encounter_type, status, admit_ts, discharge_ts, facility_canonical_id, facility_name, is_acute, los_hours, source_event_ids, source_systems, has_adt, has_claims, has_auth, confidence_score, confidence_flags, admit_source_priority, discharge_source_priority, payer_id, drg, principal_diagnosis, admitting_diagnosis, diagnosis_codes, is_readmission, readmission_days, obs_to_ip_conversion, transfer_chain, episode_id, created_at, updated_at, asre_version",
         "Unit test verifies construction",
         "Typecheck passes",
@@ -56,7 +56,7 @@
       "title": "Define Episode dataclass",
       "description": "As a developer, I need the episode output schema as a Python dataclass matching asre_episodes.",
       "acceptanceCriteria": [
-        "asre/models/episode.py defines Episode with all fields from SPEC §3.4 (asre_episodes)",
+        "asre/models/episode.py defines Episode with all fields from SPEC \u00a73.4 (asre_episodes)",
         "Fields include: episode_id, patient_key, episode_type, episode_status, episode_start_ts, episode_end_ts, total_los_days, encounter_ids, encounter_count, facility_count, facility_sequence, includes_readmission, includes_post_acute, is_acute, principal_diagnosis, diagnosis_codes, confidence_score, created_at, updated_at",
         "Unit test verifies construction",
         "Typecheck passes",
@@ -86,7 +86,7 @@
       "title": "Define EventBatch dataclass",
       "description": "As a developer, I need the EventBatch abstraction for internal processing.",
       "acceptanceCriteria": [
-        "asre/models/batch.py defines EventBatch with batch_id: str and events: list[CanonicalEvent] per SPEC §2.4",
+        "asre/models/batch.py defines EventBatch with batch_id: str and events: list[CanonicalEvent] per SPEC \u00a72.4",
         "Unit test verifies construction and event access",
         "Typecheck passes",
         "Tests pass"
@@ -101,7 +101,7 @@
       "description": "As a developer, I need structured logging so every pipeline stage emits consistent JSON logs with stage context.",
       "acceptanceCriteria": [
         "asre/observability/logger.py provides a get_logger(stage: str, run_id: str) function",
-        "Log output is JSON with fields: timestamp, level, stage, run_id, message (per SPEC §10.1)",
+        "Log output is JSON with fields: timestamp, level, stage, run_id, message (per SPEC \u00a710.1)",
         "Additional fields (records_in, records_out, duration_seconds) can be passed as kwargs",
         "Unit test verifies JSON structure of emitted logs",
         "Typecheck passes",
@@ -182,7 +182,7 @@
       "title": "Define global config Pydantic schema",
       "description": "As a developer, I need typed config models so invalid configurations are caught at load time.",
       "acceptanceCriteria": [
-        "asre/config/schema.py defines Pydantic models for all sections of SPEC §4.2: CustomerConfig, WarehouseConfig, ScheduleConfig, EncounterStitchingConfig, DeduplicationConfig, ReconciliationConfig, EpisodeStitchingConfig, FacilityNormalizationConfig, ConfidenceScoringConfig, AlertingConfig, GlobalConfig",
+        "asre/config/schema.py defines Pydantic models for all sections of SPEC \u00a74.2: CustomerConfig, WarehouseConfig, ScheduleConfig, EncounterStitchingConfig, DeduplicationConfig, ReconciliationConfig, EpisodeStitchingConfig, FacilityNormalizationConfig, ConfidenceScoringConfig, AlertingConfig, GlobalConfig",
         "All fields have proper types and defaults matching SPEC defaults",
         "Unit tests verify valid config loads and invalid config raises ValidationError",
         "Typecheck passes",
@@ -197,7 +197,7 @@
       "title": "Define source config Pydantic schema",
       "description": "As a developer, I need typed models for per-source mapping configs (ADT, claims, auth).",
       "acceptanceCriteria": [
-        "Pydantic models for source configs per SPEC §4.1: SourceDefinition, FieldMappings, EventTypeRules, PairedEvents, PatientClassRules, AuthStatusMap, FiltersConfig, SourceConfig",
+        "Pydantic models for source configs per SPEC \u00a74.1: SourceDefinition, FieldMappings, EventTypeRules, PairedEvents, PatientClassRules, AuthStatusMap, FiltersConfig, SourceConfig",
         "Source type validation: type must be one of adt, claims, auth",
         "Claims sources must have paired_events defined",
         "Auth sources must have auth_status_map defined",
@@ -214,7 +214,7 @@
       "title": "Define facility alias config schema",
       "description": "As a developer, I need a schema for the facility aliases YAML file.",
       "acceptanceCriteria": [
-        "Pydantic model for facility alias config per SPEC §7.4: FacilityAlias (canonical_id, canonical_name, npi, ccn, aliases list) and FacilityAliasConfig (facilities list)",
+        "Pydantic model for facility alias config per SPEC \u00a77.4: FacilityAlias (canonical_id, canonical_name, npi, ccn, aliases list) and FacilityAliasConfig (facilities list)",
         "Unit test verifies valid and invalid alias configs",
         "Typecheck passes",
         "Tests pass"
@@ -248,10 +248,10 @@
       "title": "Create example customer config",
       "description": "As a developer, I need a complete example config for use in all subsequent PRD tests.",
       "acceptanceCriteria": [
-        "customer_config/test_customer/config.yaml with all sections populated per SPEC §4.2",
-        "customer_config/test_customer/sources/adt_vendor_x.yaml per SPEC §4.1 ADT example",
-        "customer_config/test_customer/sources/claims_clearinghouse.yaml per SPEC §4.1 claims example",
-        "customer_config/test_customer/sources/auth_portal.yaml per SPEC §4.1 auth example",
+        "customer_config/test_customer/config.yaml with all sections populated per SPEC \u00a74.2",
+        "customer_config/test_customer/sources/adt_vendor_x.yaml per SPEC \u00a74.1 ADT example",
+        "customer_config/test_customer/sources/claims_clearinghouse.yaml per SPEC \u00a74.1 claims example",
+        "customer_config/test_customer/sources/auth_portal.yaml per SPEC \u00a74.1 auth example",
         "customer_config/test_customer/facility_aliases.yaml with sample facilities",
         "All example configs pass validation",
         "Typecheck passes",
@@ -456,7 +456,7 @@
         "asre/canonicalize/event_type_resolver.py defines EventTypeResolver class",
         "Implements conditional mapping: A01+IP->ADMIT, A01+OBS->OBS_START, A01+ED->ED_ARRIVAL, A03->DISCHARGE, A03+ED->ED_DEPARTURE, A03+OBS->OBS_END, A02->TRANSFER_IN, A06->OBS_TO_IP, A11->CANCEL_ADMIT, A13->CANCEL_DISCHARGE",
         "Sets admit_flag and discharge_flag based on config expressions",
-        "All 16 event types from SPEC §3.3 are supported",
+        "All 16 event types from SPEC \u00a73.3 are supported",
         "Unit tests for each event type mapping",
         "Typecheck passes",
         "Tests pass"
@@ -507,7 +507,7 @@
       "acceptanceCriteria": [
         "Maps principal_diagnosis field from source to canonical event",
         "Maps admitting_diagnosis if configured",
-        "Maps diagnosis_codes field — handles both JSON array and delimited string formats",
+        "Maps diagnosis_codes field \u2014 handles both JSON array and delimited string formats",
         "Each diagnosis code becomes a DiagnosisCode object with code, type, sequence, poa",
         "Unit test: claims row with multiple diagnoses produces correct DiagnosisCode list",
         "Typecheck passes",
@@ -523,7 +523,7 @@
       "description": "As a developer, I need to map auth status codes to standardized values.",
       "acceptanceCriteria": [
         "When source config has auth_status_map, map source status code to canonical value",
-        "Maps to: approved, denied, pending, modified (per SPEC §4.1 auth example)",
+        "Maps to: approved, denied, pending, modified (per SPEC \u00a74.1 auth example)",
         "Derives event_type from mapped status: approved -> AUTH_APPROVED, denied -> AUTH_DENIED, pending -> AUTH_REQUESTED",
         "Sets auth_flag = True on all auth events",
         "Unit test: auth record with status 'A' -> auth_status=approved, event_type=AUTH_APPROVED",
@@ -576,7 +576,7 @@
       "acceptanceCriteria": [
         "asre/facility/normalizer.py defines FacilityNormalizer class",
         "Pipeline steps (in order): uppercase, strip punctuation, expand abbreviations, remove generic suffixes, normalize whitespace",
-        "Abbreviation expansion uses configurable dictionary per SPEC §7.2 (MED CTR -> MEDICAL CENTER, HOSP -> HOSPITAL, etc.)",
+        "Abbreviation expansion uses configurable dictionary per SPEC \u00a77.2 (MED CTR -> MEDICAL CENTER, HOSP -> HOSPITAL, etc.)",
         "Generic suffixes removed: HOSPITAL, MEDICAL CENTER, HEALTH SYSTEM, HEALTH, CLINIC, CENTER (only trailing organizational suffixes)",
         "Directional tokens PRESERVED: EAST, WEST, NORTH, SOUTH",
         "Campus tokens PRESERVED: MAIN, DOWNTOWN, CAMPUS, MIDTOWN, UPTOWN",
@@ -1225,7 +1225,7 @@
         "Merge/upsert keyed on encounter_id",
         "New encounters: INSERT with created_at set",
         "Updated encounters: UPDATE with updated_at set",
-        "All fields from SPEC §3.4 admission_events_unified populated",
+        "All fields from SPEC \u00a73.4 admission_events_unified populated",
         "asre_version set to current engine version",
         "Integration test: materialize encounters, verify table contents",
         "Typecheck passes",
@@ -1348,7 +1348,7 @@
       "title": "Create dbt mart models",
       "description": "As a developer, I need dbt models that materialize the output tables.",
       "acceptanceCriteria": [
-        "dbt_project/models/marts/admission_events_unified.sql — incremental model with merge on encounter_id",
+        "dbt_project/models/marts/admission_events_unified.sql \u2014 incremental model with merge on encounter_id",
         "dbt_project/models/marts/asre_encounters_detail.sql",
         "dbt_project/models/marts/asre_audit_log.sql",
         "dbt_project/models/marts/asre_run_metrics.sql",
@@ -1367,7 +1367,7 @@
       "description": "As a developer, I need migration scripts to create all output tables.",
       "acceptanceCriteria": [
         "asre/migration/versions/003_output_tables.py creates: admission_events_unified, asre_encounters_detail, asre_audit_log, asre_run_metrics, asre_quality_metrics",
-        "Tables match SPEC §3.4 schemas exactly",
+        "Tables match SPEC \u00a73.4 schemas exactly",
         "Migration is idempotent (re-running doesn't error)",
         "Integration test: run migration on empty DB, verify tables exist with correct columns",
         "Typecheck passes",
@@ -1383,7 +1383,7 @@
       "description": "As a developer, I need all quality metrics computed after each pipeline run.",
       "acceptanceCriteria": [
         "asre/quality/metrics.py defines QualityMetricComputer class",
-        "Computes all 11 metrics from SPEC §8.2: duplicate_rate, missing_discharge_rate, reconciliation_mismatch_rate, low_confidence_rate, facility_unresolved_rate, auth_without_admit_rate, claims_only_rate, avg_confidence_score, events_ingested, encounters_created, encounters_updated, failed_event_rate",
+        "Computes all 11 metrics from SPEC \u00a78.2: duplicate_rate, missing_discharge_rate, reconciliation_mismatch_rate, low_confidence_rate, facility_unresolved_rate, auth_without_admit_rate, claims_only_rate, avg_confidence_score, events_ingested, encounters_created, encounters_updated, failed_event_rate",
         "Each metric written to asre_quality_metrics table",
         "Unit test: known encounter set produces correct metric values",
         "Typecheck passes",
@@ -1401,7 +1401,7 @@
         "Each metric compared against warn and fail thresholds from config",
         "Status determined: pass (below warn), warn (between warn and fail), fail (above fail)",
         "Status stored on each metric row in asre_quality_metrics",
-        "Thresholds per SPEC §4.2: duplicate_rate_warn=0.05, duplicate_rate_fail=0.15, etc.",
+        "Thresholds per SPEC \u00a74.2: duplicate_rate_warn=0.05, duplicate_rate_fail=0.15, etc.",
         "Unit test: metric 0.04 with warn=0.05 produces pass",
         "Unit test: metric 0.08 with warn=0.05, fail=0.15 produces warn",
         "Unit test: metric 0.20 with fail=0.15 produces fail",
@@ -1419,8 +1419,8 @@
       "acceptanceCriteria": [
         "asre/quality/alerter.py defines Alerter class",
         "Fires HTTP POST to configured webhook URL(s) when any metric status is warn or fail",
-        "Payload format per SPEC §8.3 with run_id, run_ts, and alerts array containing metric, value, threshold, severity",
-        "Payload contains ZERO PHI — only aggregate metrics",
+        "Payload format per SPEC \u00a78.3 with run_id, run_ts, and alerts array containing metric, value, threshold, severity",
+        "Payload contains ZERO PHI \u2014 only aggregate metrics",
         "Webhook failure (network error) is logged but does not block pipeline",
         "Multiple channels supported (list of webhook URLs)",
         "Unit test: mock webhook, verify payload structure",
@@ -1475,7 +1475,7 @@
       "description": "As a developer, I need to group encounters into episodes based on temporal and clinical linkage rules.",
       "acceptanceCriteria": [
         "asre/episode/episode_stitcher.py defines EpisodeStitcher class",
-        "Algorithm per SPEC §9.2: query encounters per patient ordered by admit_ts, check linkage rules against prior encounters, link to existing episode or create new",
+        "Algorithm per SPEC \u00a79.2: query encounters per patient ordered by admit_ts, check linkage rules against prior encounters, link to existing episode or create new",
         "Linkage rules (all windows configurable): readmission within readmission_window_days (default 30), post-acute linkage within post_acute_linkage_days (default 14), planned return within planned_return_days (default 90), ED bounce-back within ed_bounceback_days (default 7)",
         "Unit tests for each linkage rule",
         "Typecheck passes",
@@ -1590,7 +1590,7 @@
       "description": "As a developer, I need episode confidence as a weighted mean of encounter scores.",
       "acceptanceCriteria": [
         "asre/episode/episode_scorer.py defines EpisodeScorer class",
-        "episode_confidence = sum(encounter_confidence_i * los_hours_i) / sum(los_hours_i) per SPEC §9.4",
+        "episode_confidence = sum(encounter_confidence_i * los_hours_i) / sum(los_hours_i) per SPEC \u00a79.4",
         "Encounters with zero LOS (e.g., ED-only) use minimum weight of 1 hour",
         "Unit test: two encounters (score 0.8, LOS 48h) and (score 0.6, LOS 24h) produces weighted mean",
         "Unit test: ED-only encounter with zero LOS uses 1 hour weight",
@@ -1606,7 +1606,7 @@
       "title": "Populate episode metadata",
       "description": "As a developer, I need episode output fields populated correctly.",
       "acceptanceCriteria": [
-        "All fields from SPEC §3.4 asre_episodes populated: episode_id, patient_key, episode_type, episode_status, episode_start_ts, episode_end_ts, total_los_days, encounter_ids, encounter_count, facility_count, facility_sequence, includes_readmission, includes_post_acute, is_acute, principal_diagnosis, diagnosis_codes, confidence_score, created_at, updated_at",
+        "All fields from SPEC \u00a73.4 asre_episodes populated: episode_id, patient_key, episode_type, episode_status, episode_start_ts, episode_end_ts, total_los_days, encounter_ids, encounter_count, facility_count, facility_sequence, includes_readmission, includes_post_acute, is_acute, principal_diagnosis, diagnosis_codes, confidence_score, created_at, updated_at",
         "episode_status: active (any encounter open), closed (all closed), reopened",
         "Unit test: multi-encounter episode produces all metadata correct",
         "Typecheck passes",
@@ -1734,7 +1734,7 @@
         "Tests pass"
       ],
       "priority": 101,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -1745,7 +1745,7 @@
         "Dockerfile based on Python 3.11 slim image",
         "Installs: ASRE package, dbt-core, all three warehouse adapters (dbt-snowflake, dbt-bigquery, dbt-redshift)",
         "Includes AHRQ CCS grouper data files",
-        "Runs as non-root user (security requirement per SPEC §14.2)",
+        "Runs as non-root user (security requirement per SPEC \u00a714.2)",
         "Entry point: asre CLI",
         "docker build -t asre-engine:latest . succeeds",
         "Image size < 500MB",
@@ -1753,7 +1753,7 @@
         "Tests pass"
       ],
       "priority": 102,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -1801,7 +1801,7 @@
         "/health returns 200 with {status: ok} when container is running",
         "Returns 503 if pipeline is in a failed state",
         "HEALTHCHECK instruction in Dockerfile",
-        "Minimal overhead (no web framework — use http.server or similar)",
+        "Minimal overhead (no web framework \u2014 use http.server or similar)",
         "Typecheck passes",
         "Tests pass"
       ],
@@ -1830,7 +1830,7 @@
       "title": "Validate environment variable configuration",
       "description": "As an operator, I need clear errors when required env vars are missing.",
       "acceptanceCriteria": [
-        "Required env vars per SPEC §13.2: ASRE_CUSTOMER_ID, ASRE_CONFIG_PATH, ASRE_WAREHOUSE_TYPE, ASRE_WAREHOUSE_CREDENTIALS",
+        "Required env vars per SPEC \u00a713.2: ASRE_CUSTOMER_ID, ASRE_CONFIG_PATH, ASRE_WAREHOUSE_TYPE, ASRE_WAREHOUSE_CREDENTIALS",
         "Optional env vars: ASRE_RUN_MODE, ASRE_LOG_LEVEL, ASRE_ALERT_WEBHOOK_URL, ASRE_DRY_RUN",
         "Missing required env var produces clear error message listing what's missing",
         "Validation runs before any pipeline work",
@@ -1846,7 +1846,7 @@
       "title": "Document deployment process",
       "description": "As an operator, I need documentation for deploying ASRE.",
       "acceptanceCriteria": [
-        "README.md with: quick start (local dev with Postgres), configuration guide (customer config structure), deployment guide (Docker, env vars, orchestration), CLI reference (all commands), infrastructure requirements (CPU, memory, disk per SPEC §13.5), security notes (PHI handling, access control)",
+        "README.md with: quick start (local dev with Postgres), configuration guide (customer config structure), deployment guide (Docker, env vars, orchestration), CLI reference (all commands), infrastructure requirements (CPU, memory, disk per SPEC \u00a713.5), security notes (PHI handling, access control)",
         "Typecheck passes",
         "Tests pass"
       ],
