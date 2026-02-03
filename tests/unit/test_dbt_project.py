@@ -50,7 +50,7 @@ class TestDbtProjectStructure:
 
     def test_gitkeep_in_empty_model_dirs(self) -> None:
         models_dir = DBT_PROJECT_DIR / "models"
-        for subdir in ["staging", "intermediate", "marts"]:
+        for subdir in ["intermediate"]:
             assert (models_dir / subdir / ".gitkeep").is_file(), (
                 f"Missing .gitkeep in models/{subdir}"
             )

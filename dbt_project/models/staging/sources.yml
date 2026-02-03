@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: asre_raw
+    description: "Raw tables populated by the ASRE Python pipeline"
+    schema: public
+    tables:
+      - name: admission_events_unified
+        description: "Encounter-level unified view with confidence scores, written by MaterializeStage"
+      - name: asre_encounters_detail
+        description: "Event-level detail with role classifications, written by MaterializeStage"
+      - name: asre_audit_log
+        description: "Pipeline modification audit trail, written by AuditLogger"
+      - name: asre_run_metrics
+        description: "Per-stage timing and throughput metrics, written by RunMetricsWriter"
