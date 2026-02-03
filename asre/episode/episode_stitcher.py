@@ -20,11 +20,21 @@ Linkage rules (checked in order):
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from asre.models.encounter import Encounter
+
+
+def generate_episode_id(first_encounter_id: str) -> str:
+    """Generate a deterministic episode ID from the first encounter's ID.
+
+    Uses SHA-256 with a domain separator to avoid collisions with encounter IDs.
+    """
+    raw = f"episode|{first_encounter_id}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -36,6 +46,7 @@ class _EpisodeGroup:
     patient_key: str = ""
     includes_readmission: bool = False
     includes_post_acute: bool = False
+    episode_id: str = ""
 
     @property
     def last_encounter(self) -> Encounter:
@@ -80,6 +91,11 @@ class EpisodeStitcher:
             patient_encounters = sorted(by_patient[patient_key], key=lambda e: e.admit_ts)
             groups = self._stitch_patient(patient_encounters)
             all_groups.extend(groups)
+
+        # Generate deterministic episode IDs from first encounter in each group
+        for group in all_groups:
+            if group.encounter_ids:
+                group.episode_id = generate_episode_id(group.encounter_ids[0])
 
         return all_groups
 
