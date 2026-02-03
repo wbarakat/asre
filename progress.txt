@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- AHRQCCSGrouper in `asre/groupers/ahrq_ccs.py`: implements ConditionGrouper; _classify_by_drg() checks DRG integer ranges first, _classify_by_icd10() uses ICD-10 prefix matching; specific categories (chronic_exacerbation, maternity, behavioral_health, surgical) checked before broad medical catch-all
+- `classify_episode_type(diagnosis_codes, drg) -> str` in `asre/episode/condition_grouper.py`: dispatcher function using AHRQCCSGrouper singleton; use this for episode type classification
 - ConditionGrouper ABC in `asre/groupers/base.py`: abstract group(diagnosis_codes, drg) -> str; valid return values in VALID_EPISODE_TYPES frozenset: surgical, medical, chronic_exacerbation, maternity, behavioral_health, unclassified; diagnosis_codes param is list[dict[str, str | None]] with keys code, type, sequence, poa
 - EpisodeStitcher in `asre/episode/episode_stitcher.py`: stitch(encounters) returns list[_EpisodeGroup]; partitions by patient_key, sorts by admit_ts, checks 4 linkage rules in order: readmission (both acute, within window), post-acute (prior acute, current non-acute, within window), ED bounce-back (current ed_only, within window), planned return (same facility, within window but beyond readmission window for acute-to-acute); _EpisodeGroup accumulates encounter_ids and encounters; linkage checks against last discharged encounter in group
 - _EpisodeGroup tracks `includes_readmission: bool` (default False), `includes_post_acute: bool` (default False), `episode_id: str` (default ""); _try_link() returns linkage type string ("readmission", "post_acute", "ed_bounceback", "planned_return") or None
@@ -1700,4 +1702,19 @@
   - When using dict literals in tests with strict mypy, annotate with explicit type (e.g., `list[dict[str, str | None]]`) to avoid `dict[str, str]` vs `dict[str, str | None]` incompatibility
   - The groupers/ package follows same empty __init__.py pattern as other ASRE packages
   - VALID_EPISODE_TYPES uses frozenset for immutability — subclasses should validate their return values against it
+---
+
+## 2026-02-02 - US-092
+- Implemented AHRQ CCS grouper with DRG-based and ICD-10-CM prefix-based classification
+- Files changed:
+  - asre/groupers/ahrq_ccs.py (new, AHRQCCSGrouper implementing ConditionGrouper)
+  - asre/episode/condition_grouper.py (new, dispatcher with classify_episode_type function)
+  - tests/unit/test_ahrq_ccs_grouper.py (new, 20 tests)
+  - prd.json (US-092 passes: true)
+- **Learnings for future iterations:**
+  - AHRQCCSGrouper uses DRG integer ranges for surgical/maternity/behavioral_health DRG classification, then ICD-10 prefix matching for diagnosis codes
+  - ICD-10 prefix matching checks specific categories (chronic_exacerbation, maternity, behavioral_health, surgical) before broad medical chapter catch-all
+  - classify_episode_type() in episode/condition_grouper.py is a simple dispatcher to AHRQCCSGrouper singleton — use this for episode classification
+  - _match_prefix strips dots and uppercases before comparison — prefixes are stored without dots
+  - Test "unknown code" should use a numeric prefix (e.g., "999.99") rather than a letter prefix since all ICD-10 chapters start with A-Z and would match medical catch-all
 ---
