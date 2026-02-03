@@ -1,4 +1,8 @@
 ## Codebase Patterns
+- DDLTypeMapper in `asre/migration/ddl_types.py`: maps generic types (text, boolean, integer, real, json, array, timestamp) to warehouse-specific SQL types; also provides `primary_key(col)` and `composite_primary_key(cols)` helpers (BigQuery has no PK constraint); instantiate with `DDLTypeMapper(adapter.warehouse_type)`
+- All IngestAdapter implementations expose `warehouse_type` property: "postgres", "snowflake", "bigquery", "redshift"
+- Migrator.set_schema_version() uses warehouse-aware upsert: ON CONFLICT for Postgres, MERGE for Snowflake/BigQuery, DELETE+INSERT for Redshift
+- Migration scripts access warehouse type via `getattr(adapter, "warehouse_type", "postgres")` for backward compatibility with mocked adapters
 - dbt cross-warehouse macros in `dbt_project/macros/cross_warehouse.sql`: `json_type()` (JSONB/VARIANT/JSON/SUPER), `array_type()`, `timestamp_type()` (TIMESTAMPTZ/TIMESTAMP_TZ/TIMESTAMP), `quote_identifier(name)` (double-quotes vs backticks for BigQuery), `current_timestamp_value()`
 - dbt profiles in `dbt_project/profiles.yml`: dev (postgres), snowflake, bigquery, redshift targets; source schema configurable via `var('asre_source_schema', target.schema)` in sources.yml
 - dbt `asre_audit_log.sql` uses `quote_identifier('timestamp')` macro because `timestamp` is a reserved word in BigQuery
@@ -1867,4 +1871,48 @@
   - Source schema should use `var('asre_source_schema', target.schema)` instead of hardcoded `public` for portability
   - dbt handles incremental merge/upsert differently per adapter natively (MERGE for Snowflake/BigQuery, DELETE+INSERT for Redshift/Postgres) — no custom macro needed when using `unique_key` in config
   - BigQuery uses backticks for quoting, all others use double quotes
+---
+
+## 2026-02-02 - US-101
+- What was implemented: Cross-warehouse migration support — migration scripts now detect warehouse type from the adapter and generate warehouse-appropriate DDL syntax (column types, primary key constraints, upsert patterns)
+- Files changed:
+  - `asre/migration/ddl_types.py` (new - DDLTypeMapper class mapping generic types to warehouse-specific SQL)
+  - `asre/ingest/base.py` (added abstract `warehouse_type` property)
+  - `asre/ingest/postgres.py` (added `warehouse_type = "postgres"`)
+  - `asre/ingest/snowflake.py` (added `warehouse_type = "snowflake"`)
+  - `asre/ingest/bigquery.py` (added `warehouse_type = "bigquery"`)
+  - `asre/ingest/redshift.py` (added `warehouse_type = "redshift"`)
+  - `asre/migration/migrator.py` (set_schema_version now warehouse-aware: ON CONFLICT/MERGE/DELETE+INSERT)
+  - `asre/migration/versions/_001_initial_schema.py` (uses DDLTypeMapper for column types)
+  - `asre/migration/versions/_003_output_tables.py` (uses DDLTypeMapper for all 5 output tables)
+  - `asre/migration/versions/_004_episode_tables.py` (uses DDLTypeMapper for episode table)
+  - `tests/unit/test_cross_warehouse_migrations.py` (new - 49 tests)
+  - `tests/unit/test_ingest_adapter.py` (updated DummyAdapter with warehouse_type)
+- **Learnings for future iterations:**
+  - BigQuery doesn't support PRIMARY KEY constraints in CREATE TABLE — use NOT NULL instead; BigQuery also uses STRING instead of TEXT, BOOL instead of BOOLEAN, INT64 instead of INTEGER, FLOAT64 instead of REAL
+  - Redshift uses VARCHAR(65535) instead of TEXT, and SUPER instead of JSONB/VARIANT for JSON columns
+  - Use `getattr(adapter, "warehouse_type", "postgres")` in migration scripts for backward compat with mocked adapters in tests
+  - Upsert patterns differ by warehouse: Postgres=ON CONFLICT, Snowflake/BigQuery=MERGE, Redshift=DELETE+INSERT
+  - Adding abstract property to IngestAdapter breaks any DummyAdapter in tests that doesn't implement it
+---
+
+## 2026-02-02 - US-102
+- What was implemented: Production Dockerfile with multi-stage build
+- Files changed: Dockerfile (new), .dockerignore (new), prd.json (updated)
+- **Learnings for future iterations:**
+  - AHRQ CCS grouper data is embedded in `asre/groupers/ahrq_ccs.py` Python source, not in separate data files
+  - Docker cannot be tested locally (daemon not running); Dockerfile verified structurally
+  - Pre-existing 41 mypy errors across 10 files; not related to any new changes
+  - Multi-stage build keeps image small: builder stage compiles wheels, production stage only installs them
+  - Non-root user `asre` (uid/gid 1000) satisfies SPEC 14.2 security requirement
+---
+
+## 2026-02-02 - US-103
+- What was implemented: Auto-migration on startup — ASRE automatically checks schema version and runs pending migrations before pipeline execution
+- Files changed: asre/cli/main.py (added `_run_auto_migration()` helper, called from `_create_pipeline_runner()`), tests/unit/test_auto_migration.py (new, 7 tests), tests/integration/test_migrator_integration.py (added fresh DB auto-migration test), prd.json (updated)
+- **Learnings for future iterations:**
+  - `_run_auto_migration()` is a standalone function in cli/main.py that takes an adapter; easy to test by patching `asre.migration.migrator.Migrator`
+  - Lazy imports in functions (e.g., `from asre.ingest.postgres import PostgresAdapter` inside `_create_pipeline_runner`) require patching at the source module, not at `asre.cli.main`
+  - The Migrator.run() handles both fresh installs (version 0) and upgrades; _run_auto_migration adds user-facing messaging and short-circuits when schema is current
+  - Migration failure propagates as an exception through the CLI, causing non-zero exit code — no special handling needed
 ---

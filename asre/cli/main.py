@@ -11,6 +11,43 @@ import click
 from asre.config.loader import load_config
 
 
+def _run_auto_migration(adapter: Any) -> None:
+    """Run schema migrations automatically before pipeline execution.
+
+    Checks asre_metadata for current schema_version, runs any pending
+    migrations, and updates the version. Raises on migration failure
+    so the container exits with a non-zero code.
+
+    Args:
+        adapter: Connected IngestAdapter instance.
+    """
+    from asre.migration.migrator import Migrator
+
+    migrator = Migrator(adapter)
+    current_version = migrator.get_schema_version()
+
+    if current_version == 0:
+        click.echo("Fresh install detected. Running all migrations...")
+    else:
+        pending = [
+            m for m in migrator.discover_migrations()
+            if m.version > current_version
+        ]
+        if not pending:
+            click.echo(f"Schema is up to date (version {current_version}).")
+            return
+        click.echo(
+            f"Schema version {current_version} is behind. "
+            f"Running {len(pending)} pending migration(s)..."
+        )
+
+    result = migrator.run()
+    click.echo(
+        f"Migrations complete: applied {result.applied}, "
+        f"schema version now {result.current_version}."
+    )
+
+
 def _get_facility_adapter(config_path: str, customer_id: str) -> Any:
     """Create and connect a database adapter from customer config.
 
@@ -103,6 +140,9 @@ def _create_pipeline_runner(
     adapter = PostgresAdapter(global_config.warehouse.connection)
     adapter.connect()
     pipeline_config["adapter"] = adapter
+
+    # Auto-migrate schema before pipeline execution
+    _run_auto_migration(adapter)
 
     return PipelineRunner(config=pipeline_config, mode=mode)
 

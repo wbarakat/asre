@@ -95,6 +95,46 @@ class TestMigratorIntegration:
         version = migrator.get_schema_version()
         assert version == 3
 
+    def test_auto_migration_on_fresh_database(self, pg_adapter: PostgresAdapter) -> None:
+        """Auto-migration creates all tables from scratch on fresh DB."""
+        # Drop everything to simulate a fresh install
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_episodes")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_quality_metrics")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_run_metrics")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_audit_log")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_encounters_detail")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS admission_events_unified")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_checkpoints")
+        pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
+
+        from asre.cli.main import _run_auto_migration
+
+        _run_auto_migration(pg_adapter)
+
+        # Verify key tables exist by querying them
+        rows = pg_adapter.read_source(
+            "asre_metadata",
+            "SELECT key, value FROM asre_metadata WHERE key = 'schema_version'",
+        )
+        assert len(rows) == 1
+        version = int(rows[0]["value"])
+        assert version > 0
+
+        # Verify output tables exist
+        for table in [
+            "admission_events_unified",
+            "asre_encounters_detail",
+            "asre_audit_log",
+            "asre_run_metrics",
+            "asre_quality_metrics",
+        ]:
+            result = pg_adapter.read_source(
+                table,
+                f"SELECT 1 FROM {table} LIMIT 0",
+            )
+            # Should not raise -- table exists
+            assert isinstance(result, list)
+
     def test_watermark_works_after_migration(self, pg_adapter: PostgresAdapter) -> None:
         """Watermark management works on the migrated asre_metadata table."""
         pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
