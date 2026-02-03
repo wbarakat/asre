@@ -8,7 +8,20 @@ from typing import Any
 
 import click
 
+from asre.config.env_validator import validate_env_vars
 from asre.config.loader import load_config
+
+
+def _check_env_or_exit() -> None:
+    """Validate required environment variables and exit if any are missing.
+
+    This runs before any pipeline work to give operators a clear,
+    actionable error message.
+    """
+    result = validate_env_vars()
+    if not result.is_valid:
+        click.echo(f"Error: {result.error_message()}", err=True)
+        sys.exit(1)
 
 
 def _run_auto_migration(adapter: Any) -> None:
@@ -72,6 +85,17 @@ def cli(ctx: click.Context) -> None:
     """ASRE - Admission Signal Reliability Engine."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
+
+
+@cli.command("validate-env")
+def validate_env() -> None:
+    """Validate that all required ASRE environment variables are set."""
+    result = validate_env_vars()
+    if result.is_valid:
+        click.echo("All required environment variables are set.")
+    else:
+        click.echo(f"Error: {result.error_message()}", err=True)
+        sys.exit(1)
 
 
 @cli.command("validate-config")
@@ -192,6 +216,7 @@ def run_pipeline(
     customer_id: str,
 ) -> None:
     """Run the ASRE pipeline."""
+    _check_env_or_exit()
     try:
         runner = _create_pipeline_runner(
             config_path=config_path,

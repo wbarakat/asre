@@ -1,0 +1,282 @@
+{
+  "project": "ASRE",
+  "branchName": "ralph/synthetic-test-data",
+  "description": "Synthetic test data generation layer for ASRE pipeline - Faker-based factories, scenario builders, golden-file regression dataset, and integration tests covering 200+ patients with ADT, claims, auth sources including dirty/malformed records.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create base patient factory",
+      "description": "As a test author, I want a factory that generates realistic patient identities so that I can build multi-source scenarios around consistent patient keys.",
+      "acceptanceCriteria": [
+        "tests/factories/__init__.py exists making it an importable package",
+        "tests/factories/patients.py with PatientFactory class",
+        "Generates: patient_key (MRN format), name, DOB, gender, payer_id",
+        "Accepts a seed parameter for deterministic output (default: 42)",
+        "Can generate N patients in batch via PatientFactory.batch(n, seed=42)",
+        "Default batch of 200+ patients with realistic distributions (age, gender, payer mix)",
+        "Add faker to dev dependencies in pyproject.toml",
+        "Unit tests in tests/unit/test_patient_factory.py verify determinism, field types, batch size",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Create facility name pool with variants",
+      "description": "As a test author, I want a pool of facility names with known aliases and variants so that I can test facility normalization and fuzzy matching.",
+      "acceptanceCriteria": [
+        "tests/factories/facilities.py with FacilityPool class",
+        "Pool of ~20 canonical facilities with realistic names, NPI (valid 10-digit Luhn format), CCN, facility type (acute, LTACH, SNF, rehab, psych)",
+        "Each facility has 2-4 known aliases (abbreviations, misspellings, old names) e.g. 'St. Mary's Medical Center' / 'ST MARYS MED CTR' / 'Saint Mary's Hospital'",
+        "get_facility(index) returns a canonical facility with its aliases",
+        "get_random_alias(facility) returns one of its variant names",
+        "Some facilities (at least 2) intentionally have NO aliases to test unresolved facility path",
+        "Unit tests in tests/unit/test_facility_pool.py verify pool size, alias counts, NPI format",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "This must exist before ADT/claims/auth factories since they draw facility names from this pool."
+    },
+    {
+      "id": "US-003",
+      "title": "Create ADT event factory",
+      "description": "As a test author, I want a factory that generates raw ADT rows matching the raw_adt_events table schema so that I can test the ingest and canonicalize stages.",
+      "acceptanceCriteria": [
+        "tests/factories/adt.py with ADTEventFactory class",
+        "Generates rows with columns: patient_mrn, message_ts, message_control_id, sending_facility, hl7_event, patient_class, facility_npi",
+        "Schema matches customer_config/test_customer/sources/adt_vendor_x.yaml field mappings exactly",
+        "Supports all HL7 event types: A01, A02, A03, A04, A05, A06, A07, A11, A12, A13",
+        "Patient class codes: E (ED), I (inpatient), O (observation), P (pre-admit)",
+        "message_ts timestamps are realistic (proper sequencing: admit before discharge)",
+        "sending_facility drawn from FacilityPool (using aliases for variety)",
+        "facility_npi from FacilityPool matching the facility",
+        "Accepts seed for deterministic output",
+        "Unit tests in tests/unit/test_adt_factory.py verify column names, event type coverage, timestamp ordering",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Depends on US-002 FacilityPool for facility names and NPIs."
+    },
+    {
+      "id": "US-004",
+      "title": "Create claims event factory",
+      "description": "As a test author, I want a factory that generates raw claims rows matching the raw_claims table schema so that I can test paired event emission and claims canonicalization.",
+      "acceptanceCriteria": [
+        "tests/factories/claims.py with ClaimsFactory class",
+        "Generates rows with columns: member_id, admission_date, discharge_date, claim_id, facility_name, claim_type, bill_type_code, payer_code, drg_code, primary_dx, all_diagnosis_codes, billing_npi, claim_status",
+        "Schema matches customer_config/test_customer/sources/claims_clearinghouse.yaml field mappings exactly",
+        "bill_type_code follows real UB-04 patterns (11x=IP, 13x=OP, 85x=ED)",
+        "drg_code drawn from common real MS-DRG codes (e.g., 470, 871, 291, 192, 690)",
+        "primary_dx and all_diagnosis_codes use real ICD-10-CM codes",
+        "claim_status distribution: ~85% PAID, ~10% PENDING, ~5% DENIED",
+        "admission_date < discharge_date for valid records",
+        "facility_name drawn from FacilityPool",
+        "Accepts seed for deterministic output",
+        "Unit tests in tests/unit/test_claims_factory.py verify column names, code validity, date ordering",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Depends on US-002 FacilityPool. Uses real ICD-10/DRG/UB-04 codes, not made-up ones."
+    },
+    {
+      "id": "US-005",
+      "title": "Create authorization event factory",
+      "description": "As a test author, I want a factory that generates raw authorization rows matching the raw_authorizations table schema so that I can test auth status mapping.",
+      "acceptanceCriteria": [
+        "tests/factories/auth.py with AuthFactory class",
+        "Generates rows with columns: member_id, auth_date, auth_id, servicing_facility, auth_type, auth_status_code, payer_code",
+        "Schema matches customer_config/test_customer/sources/auth_portal.yaml field mappings exactly",
+        "auth_type values: INITIAL, APPROVED, DENIED, MODIFIED",
+        "auth_status_code values: A, D, P, M with realistic distributions (~70% A, ~10% D, ~15% P, ~5% M)",
+        "auth_date aligns with corresponding encounter dates (auth precedes or coincides with admit)",
+        "servicing_facility drawn from FacilityPool",
+        "Accepts seed for deterministic output",
+        "Unit tests in tests/unit/test_auth_factory.py verify column names, status distributions, date alignment",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Depends on US-002 FacilityPool."
+    },
+    {
+      "id": "US-006",
+      "title": "Create dirty/malformed record generators",
+      "description": "As a test author, I want factories that produce deliberately bad records so that I can test error tolerance and edge case handling.",
+      "acceptanceCriteria": [
+        "tests/factories/dirty.py with corruption functions",
+        "null_field(record, field_name) — sets a required field to None, returns copy",
+        "corrupt_timestamp(record) — sets event_ts to unparseable string or future date, returns copy",
+        "reverse_dates(claims_record) — discharge_date before admission_date, returns copy",
+        "duplicate_record(record, n=2) — returns list of n exact duplicates with same source_record_id",
+        "near_duplicate(record) — same event with slightly different timestamp (within dedup tolerance), returns copy",
+        "unknown_facility(record) — facility name not in FacilityPool, returns copy",
+        "invalid_event_type(adt_record) — hl7_event set to unsupported code like Z99, returns copy",
+        "force_denied(claims_record) — sets claim_status to DENIED, returns copy",
+        "All functions return modified copy without mutating original",
+        "Each function also returns a description string of what was corrupted",
+        "Unit tests in tests/unit/test_dirty_factory.py verify each corruption type and immutability of original",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Functions operate on dict records produced by the ADT/claims/auth factories."
+    },
+    {
+      "id": "US-007",
+      "title": "Create scenario builders - basic encounters",
+      "description": "As a test author, I want pre-built scenario generators for basic healthcare encounter patterns so that I don't have to manually construct multi-event sequences.",
+      "acceptanceCriteria": [
+        "tests/factories/scenarios.py with ScenarioBuilder class",
+        "simple_inpatient(patient) — ADT A01 admit + A03 discharge + matching claim",
+        "ed_to_inpatient(patient) — ADT A01(E) ED arrival + A06 OBS-to-IP + A03(I) discharge + claim",
+        "observation_stay(patient) — ADT A01(O) + A03(O) + claim with 13x bill type",
+        "cancelled_admit(patient) — A01 followed by A11 (cancel admit)",
+        "claims_only_encounter(patient) — claim with no corresponding ADT events",
+        "adt_only_encounter(patient) — ADT events with no matching claim",
+        "Each scenario returns dict with adt_rows, claims_rows, auth_rows, and expected_encounters for assertion",
+        "Unit tests in tests/unit/test_scenarios.py verify each basic scenario produces correct event types and counts",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Depends on US-003, US-004, US-005 factories. Split from complex scenarios for manageable iteration size."
+    },
+    {
+      "id": "US-008",
+      "title": "Create scenario builders - complex encounters",
+      "description": "As a test author, I want pre-built scenario generators for complex healthcare encounter patterns including transfers, readmissions, and edge cases.",
+      "acceptanceCriteria": [
+        "Add to existing tests/factories/scenarios.py ScenarioBuilder class",
+        "transfer_chain(patient, n_facilities=2) — discharge from facility A, admit at facility B within transfer window",
+        "readmission(patient, days_between=15) — two separate encounters at same facility within readmission window",
+        "orphan_discharge(patient) — A03 discharge with no preceding A01 admit",
+        "multi_source_conflict(patient) — ADT and claims with mismatched timestamps (>1 hour difference)",
+        "long_stay_ltach(patient, days=45) — LTACH encounter exceeding acute stale threshold but within LTACH threshold",
+        "pre_admit_to_admit(patient) — A05 pre-admit followed by A01 admit",
+        "Each scenario returns dict with adt_rows, claims_rows, auth_rows, and expected_encounters",
+        "Unit tests in tests/unit/test_scenarios_complex.py verify each complex scenario",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Extends ScenarioBuilder from US-007 with complex multi-facility and edge case scenarios."
+    },
+    {
+      "id": "US-009",
+      "title": "Generate the 200+ patient master dataset",
+      "description": "As a test author, I want a single function that generates a complete, seeded dataset of 200+ patients with a realistic mix of encounter scenarios.",
+      "acceptanceCriteria": [
+        "tests/factories/dataset.py with generate_master_dataset(seed=42, n_patients=200) function",
+        "Returns SyntheticDataset dataclass with: adt_rows (list[dict]), claims_rows (list[dict]), auth_rows (list[dict]), patients (list[dict]), expected_encounter_count (int)",
+        "Patient scenario distribution (approximate): 40% simple IP, 15% ED-to-IP, 10% observation, 8% transfers, 7% readmissions, 5% claims-only, 5% ADT-only, 3% cancelled, 3% orphan discharge, 2% multi-source conflict, 2% LTACH/SNF long stay",
+        "~10% of all records include at least one dirty/malformed element from dirty.py",
+        "Deterministic: same seed always produces identical output (test with two calls)",
+        "Total event count in range 1500-3000 rows across all sources",
+        "Generatable in under 5 seconds",
+        "Unit tests in tests/unit/test_dataset.py verify determinism, row counts, scenario distribution",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Depends on all factories (US-001 through US-008). This is the main entry point for test data generation."
+    },
+    {
+      "id": "US-010",
+      "title": "Create pytest fixtures for synthetic data",
+      "description": "As a test author, I want pytest fixtures that provide the synthetic dataset so that I can use it in integration tests without boilerplate.",
+      "acceptanceCriteria": [
+        "tests/integration/__init__.py exists",
+        "tests/integration/conftest.py with session-scoped fixtures",
+        "synthetic_dataset fixture — returns full SyntheticDataset from generate_master_dataset(seed=42)",
+        "synthetic_adt_rows fixture — just the ADT rows from the dataset",
+        "synthetic_claims_rows fixture — just the claims rows",
+        "synthetic_auth_rows fixture — just the auth rows",
+        "facility_pool fixture — returns the FacilityPool instance",
+        "All fixtures are session-scoped (generated once per test run)",
+        "Unit test verifying fixtures return correct types and non-empty data",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Depends on US-009 dataset generator."
+    },
+    {
+      "id": "US-011",
+      "title": "Create curated golden-file regression dataset",
+      "description": "As a test author, I want a small hand-crafted dataset with known expected outputs so that I can detect regressions in stitching, dedup, and reconciliation.",
+      "acceptanceCriteria": [
+        "tests/golden/input/ directory with static JSON files: adt_events.json, claims.json, authorizations.json",
+        "tests/golden/expected/ directory with expected output: encounters.json, encounter_details.json",
+        "Covers exactly 10 patients with specific scenarios: simple IP, ED-to-IP, transfer chain (2 facilities), readmission, cancelled admit, claims-only, ADT-only, orphan discharge, multi-source conflict, observation stay",
+        "Each patient record has a _comment field explaining the scenario",
+        "Expected output includes: encounter_type, status, event count, confidence_score range, expected flags",
+        "All field names match existing source config schemas exactly",
+        "All ICD-10 codes, DRG codes, and NPIs are real/valid",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "Hand-crafted static data, NOT generated by factories. The golden-file regression test that runs these through the pipeline is in US-013."
+    },
+    {
+      "id": "US-012",
+      "title": "Create test Postgres loader utility",
+      "description": "As a test author, I want a utility that loads synthetic data into a test Postgres database so that I can run integration tests against the full ingest pipeline.",
+      "acceptanceCriteria": [
+        "tests/utils/__init__.py exists",
+        "tests/utils/db_loader.py with load_synthetic_data(dataset, connection_string) function",
+        "Creates tables raw_adt_events, raw_claims, raw_authorizations matching source config schemas",
+        "Uses SQLAlchemy for portability",
+        "teardown(connection_string) function drops test tables",
+        "pytest fixture test_db in tests/integration/conftest.py that sets up and tears down automatically",
+        "test_db fixture skips if no Postgres available (reads TEST_DATABASE_URL env var, default postgresql://localhost:5432/asre_test)",
+        "Unit tests for table creation and teardown logic (can use sqlite in-memory as stand-in)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Integration tests that use test_db will be skipped in CI unless Postgres is available."
+    },
+    {
+      "id": "US-013",
+      "title": "Write integration tests using synthetic data",
+      "description": "As a test author, I want integration tests that run the ASRE pipeline end-to-end against synthetic data to validate correctness.",
+      "acceptanceCriteria": [
+        "tests/integration/test_pipeline_e2e.py with tests marked @pytest.mark.integration",
+        "test_simple_inpatient_encounter — single patient, ADT + claims, verify stitched encounter",
+        "test_ed_to_ip_merge — ED arrival merges into IP encounter",
+        "test_transfer_chain — two linked encounters across facilities",
+        "test_dedup_removes_duplicates — duplicate events reduced to one",
+        "test_claims_only_flagged — encounter from claims only gets CLAIMS_ONLY_ENCOUNTER flag",
+        "test_orphan_discharge_flagged — orphan discharge gets ORPHAN_DISCHARGE flag",
+        "test_dirty_records_handled — malformed records don't crash pipeline, are logged",
+        "test_confidence_scoring — encounters get appropriate score ranges based on source mix",
+        "Tests use scenario builders from US-007/US-008 for data setup",
+        "Tests runnable via pytest -m integration (skipped by default without marker)",
+        "Register integration marker in pyproject.toml to avoid warnings",
+        "Typecheck passes",
+        "All tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "Depends on US-010 fixtures and US-012 db loader. Tests exercise pipeline stages that exist; mark tests as xfail for stages not yet implemented."
+    }
+  ]
+}

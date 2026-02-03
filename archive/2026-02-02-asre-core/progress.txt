@@ -1,0 +1,1234 @@
+## Codebase Patterns
+- Reconciler flag methods: flag_missing_discharge(enc, now, open_threshold_hours=48), flag_orphan_discharge(enc), flag_claims_only(enc), flag_adt_only(enc, now, claims_lag_days=45) — all return list[str]
+- flag_missing_discharge checks has_discharge on StitchedEncounter, then verifies admit-type events exist and encounter open > threshold
+- flag_orphan_discharge checks for discharge-type events without any admit-type events in the encounter
+- flag_claims_only / flag_adt_only use _extract_source_type() to categorize events by source
+- flag_adt_only respects claims_lag_days — only flags if encounter is older than lag threshold
+- Reconciler.reconcile_auth(encounter) returns list[str] of flags; AUTH_WITHOUT_ADMIT if encounter has auth events but no ADT/claims events
+- Reconciler.reconcile_classification(encounter) returns ReconciledClassification with encounter_type, drg, payer_id, principal_diagnosis, admitting_diagnosis, diagnosis_codes
+- ReconciledClassification dataclass: encounter_type (str), drg/payer_id/principal_diagnosis/admitting_diagnosis (str|None), diagnosis_codes (list[dict])
+- Classification priority defaults: claims=100, ADT=80, auth=40 (stored in _DEFAULT_CLASSIFICATION_PRIORITY)
+- Admitting diagnosis specifically resolved from ADT source (not highest-priority source)
+- Diagnosis codes aggregated across sources in priority order with dedup by code value
+- _resolve_field() is a generic helper for picking field value from highest-priority source
+- Package name for snapshot testing is `syrupy`, not `pytest-syrupy`
+- Deduplicator in `asre/dedup/deduplicator.py`: find_duplicates(events) returns list of duplicate groups; uses union-find for transitive clustering
+- Deduplicator.merge_overlapping_encounters(encounters) merges overlapping StitchedEncounters for same patient+facility; groups by (patient_key, facility_canonical_id), sorts by earliest event_ts, sweep-merges overlapping ranges
+- Open encounters (has_discharge=False) overlap with any later encounter at same patient+facility
+- Merged encounter uses earlier encounter's encounter_id for stability; all events combined and re-sorted by event_ts
+- Deduplicator.resolve_duplicates(groups, source_priority) returns (kept, duplicates) tuple; sorts by -priority then ingested_at
+- Deduplicator.mark_roles(kept, duplicates) is a static method — sets role_in_encounter='duplicate' on duplicate events; kept events unchanged
+- CanonicalEvent.role_in_encounter: str | None — values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
+- Deduplicator._source_type() extracts prefix (adt/claims/auth) from source_system name for priority lookup; unknown sources default to priority 0
+- Deduplicator match key uses getattr on CanonicalEvent; default match_fields: patient_key, event_type, facility_canonical_id
+- DedupStage in `asre/dedup/stage.py`: encounters_in set externally, results on stage.encounters; runs event-level then encounter-level dedup; source priority from reconciliation.timestamp_priority config
+- All `__init__.py` files are empty placeholders
+- CLI entry point: `asre.cli.main:cli` using Click
+- mypy configured in strict mode in pyproject.toml
+- pytest configured with testpaths = ["tests"] in pyproject.toml
+- Test directories (tests/, tests/unit/, tests/integration/) need `__init__.py` files
+- Use `from __future__ import annotations` in dataclass modules for `str | None` syntax
+- Run tests with `python3 -m pytest` (not `python -m pytest`) on this system
+- Use `make test`, `make typecheck`, `make check` for common dev commands
+- Shared fixtures in `tests/conftest.py`: sample_canonical_event, sample_encounter, sample_event_batch
+- For cross-module Pydantic models on GlobalConfig, use `Any` type (not forward refs) to avoid `model_rebuild()` issues
+- Config loader: `load_config(config_path, customer_id)` returns GlobalConfig with `.sources` and `.facility_aliases` attached
+- PostgresAdapter takes `config: dict[str, Any]` with keys: host, port, database, user, password, schema
+- SQLAlchemy `text()` required for raw SQL strings; `result.mappings()` returns dict rows
+- Watermark storage pattern: `asre_metadata` table with key-value columns, `ON CONFLICT` upsert
+- IngestQueryBuilder in `asre/ingest/query_builder.py` builds SQL queries per mode (full/incremental) with optional exclude filters
+- `resolve_lookback_buffer_hours(lookback_config, source_type)` in query_builder.py parses "24h"/"3d" format strings and falls back to "default" key
+- IngestQueryBuilder accepts optional `watermark` (datetime|None) and `lookback_buffer_hours` (int) params for incremental mode
+- `dedup_by_source_record_id(records, key_field)` in `asre/ingest/dedup.py` returns `(deduped_records, dedup_count)` tuple
+- For mypy strict: use explicit `list[dict[str, Any]]` type annotation when list contains dicts with heterogeneous values (None, missing keys)
+- Integration test fixtures: use `Generator[T, None, None]` return type for yield fixtures (mypy strict), use `pytest.skip()` when Postgres unavailable
+- Integration test Postgres config: `ASRE_TEST_PG_*` env vars with defaults (host=localhost, port=5432, database=asre_test, user=postgres, password=postgres)
+- IngestStage stores raw records on `stage.raw_records` (list of dicts), not in EventBatch.events (those are for CanonicalEvents)
+- IngestStage annotates each record with `_raw_payload`, `_source_name`, `_source_type` for downstream canonicalize routing
+- Defensive copy before annotation: `dict(record)` before adding metadata keys to avoid mutating adapter-returned dicts
+- Migration filenames use `_NNN_description.py` pattern (underscore prefix for valid Python module names); Migrator regex `^_?(\d+)_(.+)\.py$` handles both prefixed and unprefixed
+- Migration scripts expose `description: str` and `upgrade(adapter: IngestAdapter) -> None` at module level
+- Use `CREATE TABLE IF NOT EXISTS` in migrations for idempotency
+- Migrator stores schema_version in asre_metadata table (same table used for watermarks)
+- FieldMapper maps raw records to CanonicalEvent; event_type set to "UNKNOWN" (resolved separately by EventTypeResolver)
+- CanonicalEvent.facility_raw is required (str, not Optional) — use empty string when mapping not configured
+- EventTypeResolver: conditional mappings checked first (order matters), then direct mappings, then "UNKNOWN" fallback
+- `_evaluate_condition` handles simple `field == 'value' AND field2 == 'value2'` expressions safely (no eval)
+- `_evaluate_flag` handles `event_type IN ('V1', 'V2')` expressions for admit/discharge flag resolution
+- PairedEventEmitter in `asre/canonicalize/paired_event_emitter.py` emits two CanonicalEvents from one claims row; uses PairedEvents config for event_ts columns and event_types
+- PairedEventEmitter reuses `_parse_event_ts` and `_get_optional` patterns from FieldMapper (static methods, same logic)
+- PatientClassResolver in `asre/canonicalize/patient_class_resolver.py` evaluates SQL-like conditions (LIKE, =, IN) safely via regex (no eval)
+- `_evaluate_condition` supports: `field LIKE 'pattern%'`, `field = 'value'`, `field IN ('v1', 'v2')` — same safe parsing pattern as EventTypeResolver
+- DiagnosisCodeMapper in `asre/canonicalize/diagnosis_mapper.py` handles JSON arrays (strings or objects), native Python lists, and delimited strings (comma, semicolon, pipe)
+- DiagnosisCodeMapper.to_serializable() converts `list[DiagnosisCode]` to `list[dict] | None` for CanonicalEvent.diagnosis_codes field
+- `record_validator.py` provides `validate_record()` and `process_records_with_tolerance()` — call before FieldMapper/PairedEventEmitter to skip bad records
+- CanonicalizeStage receives raw records via `context.config["raw_records"]` and source configs via `context.config["sources"]`
+- CanonicalizeStage routes by `_source_name` annotation on records, matching to source config by name
+- ADT processing: FieldMapper -> EventTypeResolver; Claims: PairedEventEmitter + PatientClassResolver + DiagnosisCodeMapper; Auth: FieldMapper -> EventTypeResolver -> AuthStatusMapper
+- PatientClassResolver conditions use `when` and `patient_class` keys (not `condition` and `value`)
+- EventTypeResolver conditional_mappings use `when` key (not `condition`)
+- FacilityNormalizer pipeline: uppercase -> strip punctuation -> expand abbreviations -> remove generic suffixes -> normalize whitespace
+- "ST" is NOT expanded to "SAINT" in facility names (PRD expects "ST MARYS" not "SAINT MARYS")
+- Generic suffix removal strips preserved directional/campus tokens first, removes suffix from core, then re-appends preserved tokens
+- Default abbreviations do NOT include "ST"->"SAINT" — abbreviation list is in `asre/facility/normalizer.py`
+- FacilityMatcher in `asre/facility/matcher.py`: takes FacilityAliasConfig + FacilityNormalizer, builds normalized alias->canonical_id index at construction time
+- MatchResult dataclass: canonical_id, match_type, score — used as return type for all match methods
+- FacilityMatcher indexes both aliases AND canonical_name (normalized) for each facility
+- Both input and stored aliases are normalized via FacilityNormalizer for case-insensitive comparison
+- FacilityMatcher `fuzzy_threshold` param defaults to 0.85; rapidfuzz `fuzz.token_sort_ratio` returns 0-100, divide by 100 for 0-1 range
+- FacilityMatcher._fuzzy_candidates is list of (normalized_name, canonical_id) tuples built from both canonical_name and aliases at construction time
+- FacilityMatcher.resolve_or_create() cascades: exact -> NPI -> CCN -> fuzzy -> create new; new facilities get FAC_{uuid} IDs and FACILITY_NEW_UNREVIEWED flag
+- MatchResult has `flags: list[str]` field (default empty list) for carrying metadata like FACILITY_NEW_UNREVIEWED
+- New runtime facilities are added to both _alias_index and _fuzzy_candidates so subsequent events reuse them (no duplicates)
+- FacilityNormalizationStage takes normalizer, alias_config, and registry as constructor args; new facilities must be added to both matcher (via resolve_or_create) AND registry (via add_facility)
+- FacilityRegistry in `asre/facility/registry.py`: primary store is dict[canonical_id, FacilityRecord] with alias/NPI/CCN indexes
+- FacilityRecord dataclass: canonical_id, canonical_name, facility_type, npi, ccn, aliases, flags — has to_dict() for persistence
+- Registry `persist(adapter)` serializes aliases/flags to JSON strings before calling adapter.write_records("asre_facility_registry", records)
+- Registry `add_alias(canonical_id, alias)` updates both the record's aliases list and the alias_index; raises ValueError for unknown canonical_id
+- For mypy strict: use `count: int = adapter.write_records(...)` to avoid `Returning Any` when adapter typed as `Any`
+- Click CLI: `facilities` is a group with `invoke_without_command=True`; group-level options (--config-path, --customer-id) passed to subcommands via `ctx.obj` dict
+- `_get_facility_adapter(config_path, customer_id)` in cli/main.py creates connected PostgresAdapter from config — mock this in tests
+- EncounterStitcher returns `list[StitchedEncounter]` — intermediate dataclass with events, patient_key, facility_canonical_id, last_event_ts, encounter_type
+- StitchedEncounter.add_event() updates last_event_ts for sliding window computation and derives encounter_type from patient_class priority
+- Source type extraction from source_system name: prefix-based (adt_*, claims_*, auth_*)
+- Tiebreaker map: lower index = higher priority in same_timestamp_tiebreaker list
+- EncounterStitcher accepts `patient_class_transitions` param (default: ed->IP merge, obs->IP merge, IP->IP new_encounter)
+- encounter_type priority: inpatient > observation > ed > outpatient (highest priority patient_class wins)
+- StitchedEncounter.obs_to_ip_conversion detected by OBS_TO_IP event_type in `_check_obs_to_ip()`
+- StitchedEncounter.has_discharge tracks whether a discharge event has occurred; used by `_should_force_new_encounter()` to detect IP->IP transitions
+- `_should_force_new_encounter()` checks: has_discharge + incoming admit-type event + matching new_encounter transition rule
+- Discharge event types: DISCHARGE, CLAIM_DISCHARGE, ED_DEPARTURE, OBS_END; Admit event types: ADMIT, CLAIM_ADMIT, ED_ARRIVAL, OBS_START
+- Transfer chain detection is a POST-stitching step: `_detect_transfer_chains()` runs after all encounters are stitched, scans consecutive encounters per patient
+- Transfer chain requires: (1) enc_a has discharge, (2) enc_b at different facility, (3) enc_b admit within time_window_hours of enc_a discharge
+- `transfer_chain: list[int]` on StitchedEncounter stores indices into the encounters list; empty list = no transfer
+- Multi-hop chains built from consecutive pairwise links; partial chains (A->B linked, B->C not) handled correctly
+- StitchedEncounter.status field: "open" (default/no discharge), "closed" (has discharge), "cancelled" (CANCEL_ADMIT)
+- CANCEL_ADMIT sets status="cancelled"; CANCEL_DISCHARGE clears has_discharge and sets status="open"
+- Cancellation events stitch normally (not admit-type, so _should_force_new_encounter doesn't trigger)
+- _handle_cancellation() called BEFORE discharge tracking in add_event() — order matters for CANCEL_DISCHARGE
+- Deterministic encounter_id: SHA-256 of `patient_key|facility_canonical_id|first_admit_source_record_id`; generated after stitching via `generate_encounter_id()`
+- StitchedEncounter._get_first_admit_source_record_id() finds first ADMIT-type event's source_record_id; falls back to first event if no admit
+- EncounterMetadata dataclass in `asre/stitch/metadata.py` holds derived metadata; `build_encounter_metadata(StitchedEncounter)` computes all fields
+- encounter_type derivation: StitchedEncounter.encounter_type "ed" maps to "ed_only" in metadata; None maps to "outpatient"
+- Admit/discharge timestamp derivation uses _ADMIT_EVENT_TYPES / _DISCHARGE_EVENT_TYPES sets (same as StitchedEncounter)
+- Source type detection for has_adt/has_claims/has_auth: prefix-based on source_system name (startswith "adt"/"claims"/"auth")
+- StitchStage stores encounters on `stage.encounters` and metadata on `stage.encounter_metadata`; reads encounter_stitching config from context.config
+- StitchStage._build_stitcher() selectively passes config kwargs to EncounterStitcher — missing keys use EncounterStitcher defaults
+- Test timestamps for stitching tests must be within 48h (default time_window_hours) or events will produce separate encounters
+- Reconciler in `asre/reconcile/reconciler.py`: reconcile_timestamps(encounter) returns ReconciledTimestamps with admit_ts, admit_source_priority, discharge_ts, discharge_source_priority
+- ReconciledTimestamps dataclass: admit_ts (datetime), admit_source_priority (str), discharge_ts (datetime|None), discharge_source_priority (str|None)
+- Reconciler._select_timestamp(events, event_types) groups matching events by source type, picks highest priority source, returns earliest timestamp from that source
+- _extract_source_type() helper shared pattern: prefix-based (claims/auth/adt) extraction from source_system name
+- _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES sets defined at module level in reconciler.py (same values as encounter_stitcher.py)
+- Reconciler.flag_timestamp_mismatches(encounter, timestamp_tolerance_hours=24) returns list[str] of flags; compares ADT vs claims admit/discharge timestamps
+- _earliest_ts(events, event_types) static method on Reconciler — returns earliest timestamp among events matching given types, or None
+- TIMESTAMP_MISMATCH flag: only generated when BOTH ADT and claims sources present AND admit or discharge timestamps differ by > tolerance hours
+- ReconcileStage in `asre/reconcile/stage.py`: encounters_in set externally, results on stage.encounters (list[ReconciledEncounter])
+- ReconciledEncounter wraps StitchedEncounter + reconciled_timestamps, reconciled_classification, confidence_flags; uses __getattr__ delegation
+- ReconcileStage tracks: encounters_reconciled (int), flags_generated (dict[str, int]), auth_without_admit_count (int)
+- ReconcileStage reads config from context.config["reconciliation"] for timestamp_priority, classification_priority, timestamp_tolerance_hours
+
+# ASRE Progress Tracker
+# Generated from prd.json - 108 User Stories
+# Status: [ ] = not started, [~] = in progress, [x] = done
+
+## Phase 1: Project Scaffold & Core Models (US-001 to US-011)
+- [x] US-001: Create Python project structure (priority 1)
+- [x] US-002: Define CanonicalEvent dataclass (priority 2)
+- [x] US-003: Define Encounter dataclass (priority 3)
+- [x] US-004: Define Episode dataclass (priority 4)
+- [x] US-005: Define DiagnosisCode model (priority 5)
+- [x] US-006: Define EventBatch dataclass (priority 6)
+- [x] US-007: Implement structured JSON logging (priority 7)
+- [x] US-008: Implement per-stage metrics tracking (priority 8)
+- [x] US-009: Define PipelineStage interface (priority 9)
+- [x] US-010: Scaffold dbt project for PostgreSQL (priority 10)
+- [x] US-011: Set up test infrastructure (priority 11)
+
+## Phase 2: Configuration System (US-012 to US-017)
+- [x] US-012: Define global config Pydantic schema (priority 12)
+- [x] US-013: Define source config Pydantic schema (priority 13)
+- [x] US-014: Define facility alias config schema (priority 14)
+- [x] US-015: Implement YAML config loader with env var substitution (priority 15)
+- [x] US-016: Create example customer config (priority 16)
+- [x] US-017: Implement CLI skeleton (priority 17)
+
+## Phase 3: Ingest Layer (US-018 to US-026)
+- [x] US-018: Define IngestAdapter interface (priority 18)
+- [x] US-019: Implement PostgreSQL adapter (priority 19)
+- [x] US-020: Implement full mode ingest (priority 20)
+- [x] US-021: Implement incremental mode with lookback buffer (priority 21)
+- [x] US-022: Implement source_record_id dedup on ingest (priority 22)
+- [x] US-023: Implement exclude filters (priority 23)
+- [x] US-024: Implement watermark management (priority 24)
+- [x] US-025: Implement IngestStage (priority 25)
+- [x] US-026: Implement basic migration infrastructure (priority 26)
+
+## Phase 4: Canonicalize & Event Type Resolution (US-027 to US-034)
+- [x] US-027: Implement field mapper (priority 27)
+- [x] US-028: Implement event type resolver for ADT (priority 28)
+- [x] US-029: Implement paired event emission for claims (priority 29)
+- [x] US-030: Implement patient class resolution for claims (priority 30)
+- [x] US-031: Implement diagnosis code mapping (priority 31)
+- [x] US-032: Implement auth status mapping (priority 32)
+- [x] US-033: Implement error tolerance for unparseable records (priority 33)
+- [x] US-034: Implement CanonicalizeStage (priority 34)
+
+## Phase 5: Facility Normalization (US-035 to US-042)
+- [x] US-035: Implement string normalization pipeline (priority 35)
+- [x] US-036: Implement exact alias matching (priority 36)
+- [x] US-037: Implement NPI/CCN matching (priority 37)
+- [x] US-038: Implement fuzzy matching (priority 38)
+- [x] US-039: Handle unresolved facilities (priority 39)
+- [x] US-040: Implement facility registry (priority 40)
+- [x] US-041: Implement FacilityNormalizationStage (priority 41)
+- [x] US-042: Add facility CLI commands (priority 42)
+
+## Phase 6: Encounter Stitching (US-043 to US-052)
+- [x] US-043: Basic encounter stitching (priority 43)
+- [x] US-044: Facility matching requirement for stitching (priority 44)
+- [x] US-045: ED to IP merge (priority 45)
+- [x] US-046: OBS to IP conversion (priority 46)
+- [x] US-047: IP to IP as new encounter (priority 47)
+- [x] US-048: Transfer chain detection (priority 48)
+- [x] US-049: Handle cancellation events (priority 49)
+- [x] US-050: Deterministic encounter IDs (priority 50)
+- [x] US-051: Set encounter metadata (priority 51)
+- [x] US-052: Implement StitchStage (priority 52)
+
+## Phase 7: Deduplication (US-053 to US-057)
+- [x] US-053: Identify duplicate events within encounter (priority 53)
+- [x] US-054: Resolve duplicates by source priority (priority 54)
+- [x] US-055: Mark duplicates for audit (priority 55)
+- [x] US-056: Encounter-level dedup (priority 56)
+- [x] US-057: Implement DedupStage (priority 57)
+
+## Phase 8: Cross-Source Reconciliation (US-058 to US-063)
+- [ ] US-058: Timestamp selection by source priority (priority 58)
+- [x] US-059: Classification resolution by source priority (priority 59)
+- [ ] US-060: Auth reconciliation rules (priority 60)
+- [ ] US-061: Flag timestamp mismatches (priority 61)
+- [ ] US-062: Flag missing event patterns (priority 62)
+- [x] US-063: Implement ReconcileStage (priority 63)
+
+## Phase 9: Confidence Scoring (US-064 to US-068)
+- [ ] US-064: Base confidence score computation (priority 64)
+- [ ] US-065: Penalty application to confidence score (priority 65)
+- [ ] US-066: Populate confidence_flags array (priority 66)
+- [ ] US-067: Stale encounter detection (priority 67)
+- [ ] US-068: Implement ScoreStage (priority 68)
+
+## Phase 10: Materialization & Pipeline Orchestration (US-069 to US-080)
+- [ ] US-069: Implement pipeline orchestrator (priority 69)
+- [ ] US-070: Implement stage checkpointing (priority 70)
+- [ ] US-071: Implement resume support (priority 71)
+- [ ] US-072: Implement encounter materialization (priority 72)
+- [ ] US-073: Implement encounters detail materialization (priority 73)
+- [ ] US-074: Implement readmission detection (priority 74)
+- [ ] US-075: Implement audit logging (priority 75)
+- [ ] US-076: Write run metrics (priority 76)
+- [ ] US-077: Implement error tolerance (priority 77)
+- [ ] US-078: Implement CLI diagnostic commands (priority 78)
+- [ ] US-079: Create dbt mart models (priority 79)
+- [ ] US-080: Create output table migrations (priority 80)
+
+## Phase 11: Quality Metrics & Alerting (US-081 to US-085)
+- [ ] US-081: Implement quality metric computation (priority 81)
+- [ ] US-082: Implement threshold evaluation (priority 82)
+- [ ] US-083: Implement webhook alerting (priority 83)
+- [ ] US-084: Implement dbt schema tests (priority 84)
+- [ ] US-085: Implement QualityCheckStage (priority 85)
+
+## Phase 12: Episode of Care Layer (US-086 to US-096)
+- [ ] US-086: Implement episode stitching algorithm (priority 86)
+- [ ] US-087: Implement readmission linkage (priority 87)
+- [ ] US-088: Implement post-acute linkage (priority 88)
+- [ ] US-089: Implement ED bounce-back linkage (priority 89)
+- [ ] US-090: Generate deterministic episode IDs (priority 90)
+- [ ] US-091: Implement condition grouper interface (priority 91)
+- [ ] US-092: Implement AHRQ CCS grouper (priority 92)
+- [ ] US-093: Implement episode-level confidence scoring (priority 93)
+- [ ] US-094: Populate episode metadata (priority 94)
+- [ ] US-095: Implement episode stages (priority 95)
+- [ ] US-096: Support independent episode recomputation (priority 96)
+
+## Phase 13: Warehouse Adapters (US-097 to US-101)
+- [ ] US-097: Implement Snowflake adapter (priority 97)
+- [ ] US-098: Implement BigQuery adapter (priority 98)
+- [ ] US-099: Implement Redshift adapter (priority 99)
+- [ ] US-100: Handle cross-warehouse dbt compatibility (priority 100)
+- [ ] US-101: Handle cross-warehouse migrations (priority 101)
+
+## Phase 14: Docker & Deployment (US-102 to US-108)
+- [ ] US-102: Create production Dockerfile (priority 102)
+- [ ] US-103: Implement auto-migration on startup (priority 103)
+- [ ] US-104: Implement dry-run mode (priority 104)
+- [ ] US-105: Add health check endpoint (priority 105)
+- [ ] US-106: Configure CI/CD pipeline (priority 106)
+- [ ] US-107: Validate environment variable configuration (priority 107)
+- [ ] US-108: Document deployment process (priority 108)
+
+---
+## Summary
+- Total stories: 108
+- Completed: 19
+- In progress: 0
+- Not started: 89
+
+## 2026-02-01 - US-001
+- Implemented: Python project structure with pyproject.toml, all package directories, __init__.py files, CLI entry point
+- Files changed: pyproject.toml, asre/**/__init__.py (18 files), asre/cli/main.py
+- **Learnings for future iterations:**
+  - The pip package for snapshot testing is `syrupy`, not `pytest-syrupy` as mentioned in the PRD
+  - `pip install -e ".[dev]"` installs both runtime and dev dependencies
+  - mypy strict mode passes on empty __init__.py files
+  - pytest exits with code 5 when no tests are collected (not a failure)
+  - dbt-core and dbt-postgres install cleanly together
+---
+
+## 2026-02-01 - US-002
+- Implemented: CanonicalEvent dataclass in `asre/models/canonical_event.py` with all 20 fields from SPEC §3.2
+- Files changed: asre/models/canonical_event.py, tests/__init__.py, tests/unit/__init__.py, tests/unit/test_canonical_event.py
+- **Learnings for future iterations:**
+  - Use `from __future__ import annotations` for `str | None` syntax in dataclasses with Python 3.11
+  - `list[dict[str, Any]]` works for diagnosis_codes (JSON-compatible structure)
+  - `field(default=None, repr=False)` useful for `_raw_payload` to keep repr clean
+  - Test directories need `__init__.py` files for pytest to discover them
+---
+
+## 2026-02-01 - US-003
+- Implemented: Encounter dataclass in `asre/models/encounter.py` with all 32 fields from SPEC §3.4 (admission_events_unified)
+- Files changed: asre/models/encounter.py, tests/unit/test_encounter.py
+- **Learnings for future iterations:**
+  - Follow same pattern as CanonicalEvent: required fields first, optional fields with defaults after
+  - Encounter has 18 required fields and 14 optional fields
+  - `diagnosis_codes` uses same `list[dict[str, Any]]` pattern as CanonicalEvent for JSON compatibility
+  - `transfer_chain` and `source_event_ids` are `list[str]` (required vs optional distinction matters)
+---
+
+## 2026-02-01 - US-004
+- Implemented: Episode dataclass in `asre/models/episode.py` with all 19 fields from SPEC §3.4 (asre_episodes)
+- Files changed: asre/models/episode.py, tests/unit/test_episode.py
+- **Learnings for future iterations:**
+  - Episode has 13 required fields and 6 optional fields
+  - Same pattern as Encounter: required fields first, optional with defaults after
+  - `facility_sequence` is `list[str]` (ordered list of facility IDs in the episode)
+  - `total_los_days` is float (not int) to capture partial days
+---
+
+## 2026-02-01 - US-005
+- Implemented: DiagnosisCode dataclass in `asre/models/diagnosis.py` with fields: code, type, sequence, poa
+- Added `to_dict()` and `from_dict()` methods for round-trip serialization to/from dict (JSON/VARIANT storage)
+- Files changed: asre/models/diagnosis.py, tests/unit/test_diagnosis.py
+- **Learnings for future iterations:**
+  - DiagnosisCode is a simple dataclass with 2 required fields (code, type) and 2 optional (sequence, poa)
+  - `to_dict()` / `from_dict()` pattern useful for any model that needs JSON column storage
+  - `from_dict` uses `dict.get()` for optional fields to handle missing keys gracefully
+---
+
+## 2026-02-01 - US-006
+- Implemented: EventBatch dataclass in `asre/models/batch.py` with `batch_id: str` and `events: list[CanonicalEvent]`
+- Files changed: asre/models/batch.py, tests/unit/test_batch.py
+- **Learnings for future iterations:**
+  - EventBatch is minimal: just batch_id + events list, per SPEC §2.4
+  - Same `from __future__ import annotations` pattern as other models
+  - 6 tests covering construction, empty events, index access, iteration, and type checks
+---
+
+## 2026-02-01 - US-007
+- Implemented: Structured JSON logging in `asre/observability/logger.py` with `get_logger(stage, run_id)` function
+- `_JsonFormatter` class formats log records as JSON with timestamp, level, stage, run_id, message fields
+- Extra kwargs (records_in, records_out, duration_seconds) passed via `extra={}` are included in JSON output
+- Each logger is namespaced as `asre.{stage}.{run_id}` with propagation disabled to avoid duplicate output
+- Files changed: asre/observability/logger.py, tests/unit/test_logger.py
+- **Learnings for future iterations:**
+  - Use `logging.StreamHandler` with custom `Formatter` subclass for JSON output
+  - `getattr(record, key, None)` extracts extra kwargs from LogRecord
+  - Logger names must be unique per stage+run_id to avoid handler duplication
+  - `logger.propagate = False` prevents double-logging via root logger
+  - Tests redirect handler stream to `io.StringIO` for output capture
+---
+
+## 2026-02-01 - US-008
+- Implemented: StageMetrics class in `asre/observability/metrics.py` with context manager interface
+- Tracks: stage_name, run_id, started_at, completed_at, records_in, records_out, errors, status
+- Context manager auto-captures timing (started_at on enter, completed_at on exit)
+- Status transitions: pending -> running -> success/failed
+- `to_dict()` method serializes all fields for persistence to asre_run_metrics table
+- Files changed: asre/observability/metrics.py, tests/unit/test_metrics.py
+- **Learnings for future iterations:**
+  - Context manager `__exit__` receives exc_type/exc_val/exc_tb — check exc_type to detect failures
+  - `datetime.now(timezone.utc)` for UTC timestamps (not `datetime.utcnow()` which is naive)
+  - StageMetrics is a plain class (not dataclass) because it needs `__enter__`/`__exit__` methods and mutable state
+  - 7 tests covering: construction, timing capture, failure recording, field tracking, to_dict serialization, UTC validation
+---
+
+## 2026-02-01 - US-009
+- Implemented: PipelineStage ABC and PipelineContext dataclass in `asre/pipeline/runner.py`
+- PipelineStage defines abstract `run(batch: EventBatch, context: PipelineContext) -> EventBatch` method
+- PipelineContext holds: run_id (str), config (dict), mode (str), metrics_collector (Any, default None)
+- Files changed: asre/pipeline/runner.py, tests/unit/test_pipeline_stage.py
+- **Learnings for future iterations:**
+  - PipelineContext uses `dict[str, Any]` for config since the Pydantic schema isn't defined yet (US-012)
+  - metrics_collector typed as `Any` since no MetricsCollector class exists yet
+  - 7 tests: 4 for PipelineContext construction, 3 for PipelineStage ABC (direct instantiation fails, dummy implementation works, incomplete subclass fails)
+---
+
+## 2026-02-01 - US-010
+- Implemented: dbt project scaffold with dbt_project.yml (project name asre), profiles.yml (local PostgreSQL via env vars), .gitkeep files in all empty model directories
+- Files changed: dbt_project/dbt_project.yml, dbt_project/profiles.yml, dbt_project/models/staging/.gitkeep, dbt_project/models/intermediate/.gitkeep, dbt_project/models/marts/.gitkeep, dbt_project/tests/.gitkeep, tests/unit/test_dbt_project.py
+- **Learnings for future iterations:**
+  - dbt_project.yml uses `config-version: 2` for dbt 1.7+
+  - profiles.yml uses `{{ env_var('VAR', 'default') }}` Jinja syntax for env var substitution with defaults
+  - dbt debug requires a running Postgres instance - can only be tested in integration tests, not unit tests
+  - Empty directories in git need .gitkeep files to be tracked
+  - 8 tests covering: yml existence, project name, required keys, profiles existence, postgres target type, model dirs, gitkeep files, tests dir
+---
+
+## 2026-02-02 - US-011
+- Implemented: Test infrastructure with shared conftest fixtures, integration test directory, Makefile with common commands
+- Files changed: tests/conftest.py (new), tests/unit/test_conftest_fixtures.py (new), tests/integration/__init__.py (new), Makefile (new)
+- **Learnings for future iterations:**
+  - conftest.py at tests/ level makes fixtures available to both unit/ and integration/ tests
+  - syrupy provides `snapshot` fixture automatically when installed - no conftest setup needed
+  - Makefile targets: test, test-unit, test-integration, typecheck, lint, install, clean, check
+  - 9 tests verify fixtures: 2 for sample_canonical_event, 2 for sample_encounter, 4 for sample_event_batch, 1 for syrupy
+  - Total test count: 67 (58 existing + 9 new)
+---
+
+## 2026-02-02 - US-012
+- Implemented: Global config Pydantic schema in `asre/config/schema.py` with 11 Pydantic models
+- Models: CustomerConfig, WarehouseConfig, ScheduleConfig, EncounterStitchingConfig, DeduplicationConfig, ReconciliationConfig, EpisodeStitchingConfig, FacilityNormalizationConfig, ConfidenceScoringConfig, AlertingConfig, GlobalConfig
+- All fields have proper types and defaults matching SPEC §4.2 defaults
+- Files changed: asre/config/schema.py (new), tests/unit/test_config_schema.py (new)
+- **Learnings for future iterations:**
+  - Pydantic v2 `BaseModel` with `from __future__ import annotations` works well with `dict[str, Any]` type syntax
+  - Default mutable values (dicts, lists) in Pydantic models are safe — Pydantic deep-copies them per instance
+  - GlobalConfig requires customer + warehouse, all other sub-configs have defaults
+  - 28 tests covering: all 10 sub-configs individually + GlobalConfig with valid/invalid/override scenarios
+  - Total test count: 95 (67 existing + 28 new)
+---
+
+## 2026-02-02 - US-013
+- Implemented: Source config Pydantic schema in `asre/config/source_schema.py` with 9 Pydantic models
+- Models: SourceDefinition, FieldMappings, EventTypeRules, PairedEventConfig, PairedEvents, PatientClassRules, AuthStatusMap, FiltersConfig, SourceConfig
+- SourceConfig.type uses `Literal["adt", "claims", "auth"]` for type validation
+- model_validator enforces: claims must have paired_events, auth must have auth_status_map
+- Files changed: asre/config/source_schema.py (new), tests/unit/test_source_config_schema.py (new)
+- **Learnings for future iterations:**
+  - Use `Literal["adt", "claims", "auth"]` for enum-like type validation in Pydantic v2
+  - Use `@model_validator(mode="after")` for cross-field validation (e.g., type-dependent required fields)
+  - PairedEvents needs a sub-model (PairedEventConfig) for each side (admit/discharge)
+  - 33 tests covering: all 8 sub-models individually + SourceConfig for each source type (ADT, claims, auth) + validation rules + optional fields
+  - Total test count: 128 (95 existing + 33 new)
+---
+
+## 2026-02-02 - US-014
+- Implemented: Facility alias config Pydantic schema in `asre/config/facility_alias_schema.py` with 2 models
+- Models: FacilityAlias (canonical_id, canonical_name, npi, ccn, facility_type, aliases) and FacilityAliasConfig (facilities list)
+- Files changed: asre/config/facility_alias_schema.py (new), tests/unit/test_facility_alias_schema.py (new)
+- **Learnings for future iterations:**
+  - FacilityAlias includes `facility_type` field (not in PRD acceptance criteria but needed per SPEC §7.4 and used by US-040 facility registry)
+  - Same pattern as other config schemas: required fields first, optional with defaults
+  - `aliases: list[str] = []` defaults to empty list (Pydantic deep-copies mutable defaults)
+  - 12 tests covering: FacilityAlias with all fields, required-only, missing fields, defaults + FacilityAliasConfig with valid/empty/default/invalid facilities
+  - Total test count: 140 (128 existing + 12 new)
+---
+
+## 2026-02-02 - US-015
+- Implemented: YAML config loader in `asre/config/loader.py` with `load_config(config_path, customer_id) -> GlobalConfig`
+- Loads `config.yaml`, discovers all `sources/*.yaml`, optionally loads `facility_aliases.yaml`
+- Recursive `${ENV_VAR}` substitution in all YAML string values (supports multiple vars per string)
+- Added `sources: list[Any]` and `facility_aliases: Any | None` fields to `GlobalConfig` in schema.py
+- Files changed: asre/config/loader.py (new), asre/config/schema.py (modified), tests/unit/test_config_loader.py (new)
+- **Learnings for future iterations:**
+  - Pydantic forward references with `TYPE_CHECKING` don't work at runtime — use `Any` type for fields that hold models from other modules to avoid `model_rebuild()` issues
+  - `_substitute_env_vars` must be recursive to handle nested dicts/lists in YAML
+  - Attach source/alias models to GlobalConfig after construction (not via dict serialization) to preserve model instances
+  - `yaml.safe_load` returns `None` for empty files — need to handle that case
+  - mypy strict mode requires explicit type annotations on return values from `Any`-returning functions
+  - 19 tests covering: valid load (4), source loading (3), facility alias loading (3), env var substitution (4), error handling (5)
+  - Total test count: 159 (140 existing + 19 new)
+---
+
+## 2026-02-02 - US-016
+- Implemented: Complete example customer config for test_customer with all required files
+- Files changed: customer_config/test_customer/config.yaml (new), customer_config/test_customer/sources/adt_vendor_x.yaml (new), customer_config/test_customer/sources/claims_clearinghouse.yaml (new), customer_config/test_customer/sources/auth_portal.yaml (new), customer_config/test_customer/facility_aliases.yaml (new), tests/unit/test_example_config.py (new)
+- **Learnings for future iterations:**
+  - config.yaml must have all sections from GlobalConfig populated for a complete example
+  - ADT source needs: event_type_rules with HL7 mappings (A01, A03, etc.), conditional_mappings for patient class (ED, OBS), admit/discharge flag expressions, filters.exclude
+  - Claims source needs: paired_events (admit/discharge), patient_class_rules with bill type conditions, diagnosis field mappings
+  - Auth source needs: auth_status_map with source_field + mappings (A->approved, D->denied, etc.)
+  - facility_aliases.yaml should include multiple facility types (acute, snf, rehab) for downstream testing of stale encounter thresholds
+  - Tests use monkeypatch to set env vars that ${ENV_VAR} patterns reference in YAML
+  - 25 tests covering: directory structure (7), config loading (4), source validation (8), facility aliases (6)
+  - Total test count: 184 (159 existing + 25 new)
+---
+
+## 2026-02-02 - US-017
+- Implemented: CLI skeleton with Click framework in `asre/cli/main.py`
+- `validate-config` command loads and validates customer config, prints success or errors
+- `test-connection` command as placeholder printing "Not yet implemented."
+- CLI group shows help with no args via `invoke_without_command=True`
+- Options `--config-path` / `--customer-id` read from env vars `ASRE_CONFIG_PATH` / `ASRE_CUSTOMER_ID` with Click's `envvar` parameter
+- Entry point already registered in pyproject.toml from US-001
+- Files changed: asre/cli/main.py (modified), tests/unit/test_cli.py (new)
+- **Learnings for future iterations:**
+  - Click's `envvar` parameter on `@click.option` reads from env var as fallback when flag not provided
+  - Click flags take precedence over env vars automatically
+  - `@click.group(invoke_without_command=True)` + `@click.pass_context` + checking `ctx.invoked_subcommand is None` to show help with no args
+  - `CliRunner` from `click.testing` supports `env={}` to set environment variables for testing
+  - Error output via `click.echo(msg, err=True)` + `sys.exit(1)` for non-zero exit codes
+  - Test YAML must match actual Pydantic schema fields: `customer_id`/`customer_name` (not `id`/`name`), `connection` as dict (not `connection_string`)
+  - 12 tests covering: help display (2), validate-config success (3), validate-config errors (4), test-connection (2), entry point (1)
+  - Total test count: 196 (184 existing + 12 new)
+---
+
+## 2026-02-02 - US-018
+- Implemented: IngestAdapter ABC in `asre/ingest/base.py` with 7 abstract methods
+- Methods: connect(), disconnect(), read_source(source_name, query, params), get_watermark(source_name), set_watermark(source_name, watermark), execute_ddl(ddl), write_records(table_name, records)
+- Files changed: asre/ingest/base.py (new), tests/unit/test_ingest_adapter.py (new)
+- **Learnings for future iterations:**
+  - Same ABC pattern as PipelineStage in `asre/pipeline/runner.py` — `from abc import ABC, abstractmethod`
+  - `read_source` returns `list[dict[str, Any]]` for raw record dicts
+  - `get_watermark` returns `datetime | None` (None when no watermark exists, e.g., first run)
+  - `write_records` returns `int` count of records written
+  - 18 tests covering: abstract instantiation (2), required methods exist (7), incomplete subclass (1), complete subclass operations (8)
+  - Total test count: 214 (196 existing + 18 new)
+---
+
+## 2026-02-02 - US-019
+- Implemented: PostgresAdapter in `asre/ingest/postgres.py` implementing IngestAdapter using SQLAlchemy + psycopg2
+- connect() builds postgresql+psycopg2 URL from config dict (host, port, database, user, password, schema)
+- Schema is set via search_path in connect_args
+- Connection errors are caught and re-raised as ConnectionError with clear message
+- read_source() uses `text()` + `result.mappings()` for dict results
+- get_watermark/set_watermark use asre_metadata table (key-value pattern)
+- write_records builds dynamic INSERT from record keys
+- disconnect() safely handles case where connect() was never called
+- Files changed: asre/ingest/postgres.py (new), tests/unit/test_postgres_adapter.py (new)
+- **Learnings for future iterations:**
+  - SQLAlchemy `create_engine` takes a URL string like `postgresql+psycopg2://user:pass@host:port/db`
+  - Use `connect_args={"options": "-csearch_path=schema"}` to set default schema
+  - `result.mappings()` returns dict-like rows from SQLAlchemy result
+  - Use `text()` from sqlalchemy for raw SQL queries
+  - Mock `create_engine` at module level: `@patch("asre.ingest.postgres.create_engine")`
+  - For tests that need a connected adapter, set `adapter._connection` directly to a MagicMock
+  - Watermark storage uses `asre_metadata` table with `ON CONFLICT` upsert pattern
+  - 17 tests covering: subclass verification (2), connection management (5), read_source (3), execute_ddl (1), write_records (2), watermark (2), connection URL (2)
+  - Total test count: 231 (214 existing + 17 new)
+---
+
+## 2026-02-02 - US-020
+- Implemented: IngestQueryBuilder in `asre/ingest/query_builder.py` for building SQL queries based on ingest mode
+- Full mode: `SELECT * FROM <table>` with no watermark filtering
+- Exclude filters applied as `WHERE NOT (<exclude_expression>)` regardless of mode
+- `build_query()` returns the SQL string, `build_params()` returns params dict (empty for full mode)
+- Files changed: asre/ingest/query_builder.py (new), tests/unit/test_ingest_query_builder.py (new)
+- **Learnings for future iterations:**
+  - IngestQueryBuilder is a clean separation of query construction from adapter execution
+  - Exclude filters are literal SQL embedded in WHERE clause (not parameterized) since they come from trusted config
+  - Full mode params are always empty dict — incremental mode will add watermark param (US-021)
+  - 8 tests covering: SELECT * generation, no watermark in full mode, exclude filter as WHERE NOT, no WHERE without filter, empty params, adapter integration with mock
+  - Total test count: 239 (231 existing + 8 new)
+---
+
+## 2026-02-02 - US-021
+- Implemented: Incremental mode with lookback buffer in `asre/ingest/query_builder.py`
+- Added `watermark` (datetime|None) and `lookback_buffer_hours` (int) params to IngestQueryBuilder
+- Incremental mode adds `WHERE incremental_key > :watermark` with watermark adjusted back by lookback buffer hours
+- If no watermark exists (first run), no watermark filter applied (behaves like full mode)
+- Added `resolve_lookback_buffer_hours(lookback_config, source_type)` helper for parsing "24h"/"3d" format and source-type-specific fallback
+- Full mode unchanged — ignores watermark even if provided
+- Files changed: asre/ingest/query_builder.py (modified), tests/unit/test_incremental_ingest.py (new)
+- **Learnings for future iterations:**
+  - IngestQueryBuilder's `_should_apply_watermark()` method cleanly separates the mode + watermark-presence check
+  - Lookback config uses string format "24h" or "3d" — `resolve_lookback_buffer_hours` handles both
+  - `timedelta(hours=N)` for adjusting watermark back by lookback buffer
+  - Full mode backward compatibility: new optional params default to None/24 so existing code doesn't break
+  - 15 tests: 7 incremental query tests, 6 lookback buffer parsing tests, 2 full mode backward compatibility tests
+  - Total test count: 254 (239 existing + 15 new)
+---
+
+## 2026-02-02 - US-022
+- Implemented: `dedup_by_source_record_id` function in `asre/ingest/dedup.py`
+- Deduplicates raw record dicts by a configurable key field, keeping first occurrence by source ordering
+- Returns tuple of `(deduped_records, dedup_count)` for metrics tracking
+- Records with missing or None key values are kept (not deduped) - handles edge cases gracefully
+- Files changed: asre/ingest/dedup.py (new), tests/unit/test_ingest_dedup.py (new)
+- **Learnings for future iterations:**
+  - Dedup function is a standalone utility, not coupled to any adapter - can be used by IngestStage (US-025)
+  - `dedup_count` in the return tuple maps directly to stage metrics tracking
+  - For mypy strict mode with heterogeneous dict lists (dicts with None values or missing keys), need explicit `list[dict[str, Any]]` type annotation on the variable
+  - `str()` conversion of key values ensures consistent hashing even for non-string source_record_ids
+  - 9 tests covering: no dupes, basic dedup, multiple dupes of same id, order preservation, empty input, single record, custom key field, missing key field, None key values
+  - Total test count: 263 (254 existing + 9 new)
+---
+
+## 2026-02-02 - US-023
+- Implemented: Integration tests for exclude filters in `tests/integration/test_exclude_filters.py`
+- The exclude filter query logic was already implemented in `asre/ingest/query_builder.py` (from US-020) as `WHERE NOT (<exclude_expression>)` clause
+- Integration tests verify actual data exclusion against a real PostgreSQL database (skip when Postgres unavailable)
+- Files changed: tests/integration/test_exclude_filters.py (new)
+- **Learnings for future iterations:**
+  - Integration test fixtures use `Generator[T, None, None]` return type for pytest yield fixtures (mypy strict requirement)
+  - Use `pytest.skip()` in fixture when Postgres not available rather than marking entire module
+  - Integration test fixture pattern: `pg_adapter` fixture creates+connects adapter, `adt_table` fixture depends on it to create/populate/cleanup test tables
+  - `_pg_config()` reads from `ASRE_TEST_PG_*` env vars with sensible defaults for local dev
+  - 6 integration tests covering: A08/A31 exclusion, non-matching kept, no filter returns all, single event type, incremental mode combo, non-matching filter
+  - Total test count: 263 passed + 6 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-024
+- Implemented: Watermark management integration tests and expanded unit tests for watermark methods
+- Core watermark logic (get_watermark, set_watermark, asre_metadata table, per-source keys, upsert) was already implemented in `asre/ingest/postgres.py` from US-019
+- Added 5 integration tests verifying real Postgres watermark roundtrip, per-source isolation, upsert behavior, and storage format
+- Expanded unit tests from 2 basic stubs to 8 thorough tests covering key format, ISO serialization, commit behavior, per-source keys, upsert SQL
+- Files changed: tests/integration/test_watermark_management.py (new), tests/unit/test_postgres_adapter.py (modified)
+- **Learnings for future iterations:**
+  - Watermark key format: `watermark_{source_name}` in asre_metadata table
+  - Watermark value stored as ISO 8601 string, parsed back via `datetime.fromisoformat()`
+  - `ON CONFLICT (key) DO UPDATE SET value = :value` for upsert behavior in Postgres
+  - Integration test fixture pattern: `metadata_table` fixture creates/drops asre_metadata table
+  - Total test count: 268 passed + 11 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-025
+- Implemented: IngestStage in `asre/ingest/stage.py` implementing PipelineStage interface
+- IngestStage iterates over all configured sources, builds queries via IngestQueryBuilder, reads records via adapter, deduplicates by source_record_id
+- Raw records stored on `stage.raw_records` (not in EventBatch.events, since these are pre-canonical dicts)
+- Each record annotated with `_raw_payload` (defensive copy of original), `_source_name`, `_source_type` for downstream canonicalize routing
+- StageMetrics tracks records_in (from source, pre-dedup), records_out (post-dedup), errors (source read failures)
+- Source read failures are caught and logged, incrementing error count without halting pipeline
+- Files changed: asre/ingest/stage.py (new), tests/unit/test_ingest_stage.py (new)
+- **Learnings for future iterations:**
+  - IngestStage stores results on `self.raw_records` rather than EventBatch.events since raw dicts aren't CanonicalEvents yet
+  - Must make defensive copy of record dict (`dict(record)`) BEFORE adding metadata keys (`_raw_payload`, `_source_name`, `_source_type`) to avoid mutating adapter-returned dicts
+  - PipelineContext.config carries `adapter`, `sources`, and `schedule` as dict keys — IngestStage reads these directly
+  - `source_record_id` field name comes from `field_mappings.source_record_id` in source config (the column name in the source table, not the canonical field name)
+  - 16 tests covering: interface (2), orchestration (7), metrics (4), query building (3)
+  - Total test count: 284 passed + 11 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-026
+- Implemented: Migration infrastructure with Migrator class in `asre/migration/migrator.py` and initial schema migration in `asre/migration/versions/_001_initial_schema.py`
+- Migrator checks asre_metadata for schema_version, creates table if missing, discovers migration scripts by filename prefix, runs pending migrations
+- MigrationInfo dataclass holds version, description, module_name; MigrationResult holds applied count and current_version
+- 001_initial_schema creates asre_metadata table (key TEXT PRIMARY KEY, value TEXT NOT NULL) with IF NOT EXISTS for idempotency
+- Files changed: asre/migration/migrator.py (new), asre/migration/versions/_001_initial_schema.py (new), tests/unit/test_migrator.py (new), tests/unit/test_001_initial_schema.py (new), tests/integration/test_migrator_integration.py (new)
+- **Learnings for future iterations:**
+  - Migration filenames use `_NNN_description.py` pattern (underscore prefix) because Python modules can't start with digits
+  - Migrator regex `^_?(\d+)_(.+)\.py$` handles both `_001_` and `001_` prefixed filenames
+  - Migration scripts are plain modules with `description: str` and `upgrade(adapter) -> None` at module level — no class needed
+  - `importlib.import_module(module_name)` loads migration scripts dynamically
+  - Schema version stored in same asre_metadata table as watermarks (key='schema_version')
+  - set_schema_version uses same ON CONFLICT upsert pattern as watermarks
+  - 19 unit tests + 5 integration tests covering: Migrator construction (2), schema version check (3), migration discovery (3), execution (4), version setting (1), initial schema migration (6), integration (5)
+  - Total test count: 303 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-027
+- Implemented: FieldMapper class in `asre/canonicalize/mapper.py` that maps raw record dicts to CanonicalEvent using config-defined FieldMappings
+- Takes raw record dict + FieldMappings config, maps source columns to canonical fields
+- Generates UUID event_id per record, sets ingested_at to current UTC timestamp, sets batch_id and source_system from context
+- event_type set to "UNKNOWN" placeholder (EventTypeResolver handles resolution in US-028)
+- Handles optional fields: returns None when mapping not configured or source column missing
+- facility_raw defaults to empty string when not mapped (required field on CanonicalEvent)
+- Parses event_ts from ISO string or passes through datetime objects
+- Preserves _raw_payload from ingest stage annotations
+- Files changed: asre/canonicalize/mapper.py (new), tests/unit/test_field_mapper.py (new)
+- **Learnings for future iterations:**
+  - FieldMapper is source-type-agnostic — it maps columns per FieldMappings config regardless of ADT/claims/auth
+  - event_type resolution is separate from field mapping (US-028 EventTypeResolver handles conditional logic)
+  - CanonicalEvent.facility_raw is required (str, not Optional) — use empty string when mapping not configured
+  - `_parse_event_ts` handles both str and datetime inputs since adapters may return either
+  - `_get_optional` pattern: check mapping field is not None, then check record value is not None, then str() convert
+  - 17 tests covering: construction (2), required field mapping (1), event_ts parsing (2), UUID generation (2), ingested_at (1), optional fields (2), raw_payload (1), event_type default (1), facility_raw edge case (1), configured optional fields (3), missing source column (1)
+  - Total test count: 320 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-028
+- Implemented: EventTypeResolver class in `asre/canonicalize/event_type_resolver.py`
+- Resolves HL7 event codes + patient class into canonical ASRE event types
+- Resolution order: conditional mappings (first match wins) -> direct mappings -> "UNKNOWN" fallback
+- Conditional mapping evaluator handles `field == 'value' AND field2 == 'value2'` expressions safely (no eval())
+- Flag evaluator handles `event_type IN ('V1', 'V2')` expressions for admit_flag/discharge_flag
+- All 10 direct HL7 mappings (A01-A13) and 4 conditional mappings (ED/OBS variants) tested
+- Files changed: asre/canonicalize/event_type_resolver.py (new), tests/unit/test_event_type_resolver.py (new)
+- **Learnings for future iterations:**
+  - EventTypeResolver takes raw_record dict (not just CanonicalEvent) because conditional mappings reference source fields like `hl7_event` and `patient_class`
+  - Conditional mappings are checked BEFORE direct mappings - first match wins, so ordering in config matters
+  - The resolver mutates the CanonicalEvent in-place (sets event_type, admit_flag, discharge_flag) and returns it
+  - Source field values are stripped of whitespace before lookup (` A01 ` matches `A01`)
+  - When source field is missing or None, event stays as "UNKNOWN" - no error raised
+  - Flag expressions use `event_type IN (...)` pattern evaluated against the resolved event type, not the raw source code
+  - 46 tests covering: construction (2), direct mappings (11), conditional mappings (6), admit_flag (5), discharge_flag (5), edge cases (7), _evaluate_condition (6), _evaluate_flag (4)
+  - Total test count: 366 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-029
+- Implemented: PairedEventEmitter class in `asre/canonicalize/paired_event_emitter.py`
+- One claims source row emits two CanonicalEvents: admit (CLAIM_ADMIT, admit_flag=True) + discharge (CLAIM_DISCHARGE, discharge_flag=True)
+- Both events share: source_record_id, patient_key, facility_raw, source_system, batch_id, optional fields (payer_id, drg, principal_diagnosis, patient_class)
+- Each event gets its own unique UUID event_id and uses its own event_ts column from PairedEvents config
+- Uses same _parse_event_ts and _get_optional patterns as FieldMapper
+- Files changed: asre/canonicalize/paired_event_emitter.py (new), tests/unit/test_paired_event_emitter.py (new)
+- **Learnings for future iterations:**
+  - PairedEventEmitter is separate from FieldMapper — claims sources use PairedEventEmitter instead of FieldMapper+EventTypeResolver
+  - PairedEvents config specifies which source column to use for each event's event_ts (e.g., admission_date for admit, discharge_date for discharge)
+  - admit_flag and discharge_flag are set directly (True on respective event, None on the other) — no flag expression evaluation needed for claims
+  - 19 tests covering: construction (1), emission (9), shared fields (6), unique IDs (2), raw payload (1)
+  - Total test count: 385 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-030
+- Implemented: PatientClassResolver class in `asre/canonicalize/patient_class_resolver.py`
+- Evaluates patient_class_rules conditions in order against raw records; first match wins, no match returns None
+- Supports SQL-like expressions: `field LIKE 'pattern%'` (prefix), `field = 'value'` (equality), `field IN ('v1', 'v2')` (membership)
+- Safe regex-based parsing (no eval()) — same pattern as EventTypeResolver's `_evaluate_condition`
+- Handles edge cases: missing fields, None values, empty conditions list
+- Files changed: asre/canonicalize/patient_class_resolver.py (new), tests/unit/test_patient_class_resolver.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - PatientClassResolver follows same safe expression evaluation pattern as EventTypeResolver — no eval(), regex-based parsing
+  - LIKE pattern supports: prefix (`pattern%`), suffix (`%pattern`), contains (`%pattern%`), exact (no %)
+  - Conditions reference source field names directly (e.g., `bill_type_code`) not canonical field names
+  - PatientClassResolver is standalone — will be composed into CanonicalizeStage (US-034) alongside FieldMapper and EventTypeResolver
+  - 13 tests covering: construction (1), bill type mappings (5), no-match (1), first-match-wins (1), missing/None fields (2), equality (1), IN (1), empty rules (1)
+  - Total test count: 398 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-031
+- Implemented: DiagnosisCodeMapper class in `asre/canonicalize/diagnosis_mapper.py`
+- Maps principal_diagnosis and admitting_diagnosis as simple string field lookups
+- Maps diagnosis_codes handling three formats: JSON array of strings, JSON array of objects (full DiagnosisCode dicts), and delimited strings (comma, semicolon, pipe)
+- Native Python lists (pre-parsed by adapter) also supported
+- `to_serializable()` static method converts `list[DiagnosisCode]` to `list[dict] | None` for CanonicalEvent.diagnosis_codes
+- Files changed: asre/canonicalize/diagnosis_mapper.py (new), tests/unit/test_diagnosis_code_mapper.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - diagnosis_codes source field can arrive as JSON string, native list, or delimited string — must handle all three
+  - JSON array detection: check if string starts with `[` before trying `json.loads()`
+  - Delimited string parsing uses `re.split(r"[,;|]", raw_str)` to handle comma, semicolon, and pipe delimiters
+  - When parsing simple code strings (not full objects), default type to "ICD-10-CM" and assign sequential sequence numbers
+  - `to_serializable()` returns None (not empty list) for empty codes — matches CanonicalEvent.diagnosis_codes Optional semantics
+  - DiagnosisCodeMapper reuses same `_get_optional` pattern as FieldMapper and PairedEventEmitter
+- AuthStatusMapper in `asre/canonicalize/auth_status_mapper.py`: maps auth status codes to canonical values, derives event_type (approved->AUTH_APPROVED, denied->AUTH_DENIED, pending->AUTH_REQUESTED), sets auth_flag=True always
+- Auth status -> event_type mapping: only approved/denied/pending have derived event_types; modified and others keep existing event_type from EventTypeResolver
+  - 26 tests covering: principal_diagnosis (4), admitting_diagnosis (3), JSON array strings (3), JSON array objects (1), native list (1), delimited strings (6), edge cases (6), serialization (2)
+  - Total test count: 424 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-032
+- Implemented: AuthStatusMapper class in `asre/canonicalize/auth_status_mapper.py`
+- Maps source auth status codes (A, D, P, M) to canonical values (approved, denied, pending, modified) using AuthStatusMap config
+- Derives event_type from canonical status: approved->AUTH_APPROVED, denied->AUTH_DENIED, pending->AUTH_REQUESTED
+- Modified status does not derive event_type (keeps whatever EventTypeResolver set via event_type_rules)
+- Sets auth_flag=True on ALL auth source events, regardless of status mapping result
+- Handles edge cases: missing source field, None values, unknown status codes, whitespace in codes
+- Files changed: asre/canonicalize/auth_status_mapper.py (new), tests/unit/test_auth_status_mapper.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - Auth status -> event_type has only 3 mappings (approved, denied, pending); modified and any future statuses keep event_type from EventTypeResolver
+  - auth_flag=True is set unconditionally for all auth events — it indicates source type, not status
+  - AuthStatusMapper follows same mutate-in-place pattern as EventTypeResolver (returns same event object)
+  - Whitespace stripping on source status code values ensures reliable mapping
+  - 22 tests covering: construction (1), status mapping (7), event_type derivation (5), auth_flag (6), mutation behavior (2), whitespace (1)
+  - Total test count: 446 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-033
+- Implemented: Error tolerance for unparseable records in `asre/canonicalize/record_validator.py`
+- `RecordValidationError` exception class with `source_record_id` and `reason` attributes for error reporting
+- `validate_record(record, field_mappings)` checks required fields (patient_key, event_ts) for missing, null, or empty string values
+- `process_records_with_tolerance(records, field_mappings)` filters a batch, returning `(valid_records, errors)` tuple
+- Skipped records are logged at WARNING level with source_record_id and reason
+- Gracefully handles case where source_record_id itself is missing (reports as "unknown")
+- Files changed: asre/canonicalize/record_validator.py (new), tests/unit/test_error_tolerance.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - Validation is a separate concern from mapping — `record_validator.py` is used before FieldMapper or PairedEventEmitter
+  - `process_records_with_tolerance` returns both valid records and errors for metrics tracking (errors count maps to stage metrics)
+  - Best-effort source_record_id extraction: try to get it from the record even when other fields are invalid
+  - Empty string check uses `str.strip() == ""` to catch whitespace-only values
+  - 16 tests covering: validate_record (10 — valid, missing/null patient_key, missing/null event_ts, empty strings, error attributes), batch processing (6 — 10/2 split, error details, continues after errors, all valid, all invalid, logging)
+  - Total test count: 462 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-034
+- Implemented: CanonicalizeStage in `asre/canonicalize/stage.py` implementing PipelineStage
+- Routes records by source type: ADT (FieldMapper + EventTypeResolver), Claims (PairedEventEmitter + PatientClassResolver + DiagnosisCodeMapper), Auth (FieldMapper + EventTypeResolver + AuthStatusMapper)
+- Receives raw records via `context.config["raw_records"]` and matches to source configs by `_source_name` annotation
+- Validates records with `process_records_with_tolerance()` before mapping (error tolerance)
+- Records stage metrics: records_in (raw), records_out (including paired expansion), errors (validation failures)
+- Files changed: asre/canonicalize/stage.py (new), tests/unit/test_canonicalize_stage.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - CanonicalizeStage groups records by `_source_name`, then looks up source config by name — records with no matching config are silently skipped
+  - Claims processing applies PatientClassResolver and DiagnosisCodeMapper AFTER PairedEventEmitter, updating both paired events with resolved values
+  - Auth processing chain: FieldMapper -> EventTypeResolver -> AuthStatusMapper (AuthStatusMapper may override event_type set by EventTypeResolver)
+  - PatientClassResolver conditions use `when` and `patient_class` keys in condition dicts
+  - EventTypeResolver conditional_mappings use `when` key in condition dicts
+  - Source configs passed to CanonicalizeStage as plain dicts (not Pydantic models) — FieldMappings/EventTypeRules etc. constructed inside the stage from dict kwargs
+  - 34 tests covering: interface (3), ADT (7), claims (6), auth (5), mixed batch (3), error tolerance (3), metrics (5), source routing (2)
+  - Total test count: 496 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-035
+- Implemented: FacilityNormalizer class in `asre/facility/normalizer.py` with configurable string normalization pipeline
+- Pipeline steps: uppercase -> strip punctuation -> expand abbreviations -> remove generic suffixes -> normalize whitespace
+- Default abbreviation dictionary: MED CTR, HOSP, HLTH, SYS, SURG, REHAB, COMM, UNIV, etc. (no ST->SAINT)
+- Generic suffix removal handles preserved directional (EAST/WEST/NORTH/SOUTH) and campus (MAIN/DOWNTOWN/CAMPUS/MIDTOWN/UPTOWN) tokens
+- Suffix removal strips trailing preserved tokens first, removes suffix from core, re-appends preserved tokens
+- Files changed: asre/facility/normalizer.py (new), tests/unit/test_facility_normalizer.py (new)
+- **Learnings for future iterations:**
+  - "ST" must NOT be expanded to "SAINT" — PRD expects "ST MARYS" not "SAINT MARYS"
+  - Abbreviations that expand to generic suffixes (HOSP->HOSPITAL, MED CTR->MEDICAL CENTER) get removed when trailing — test abbreviation expansion with non-trailing positions
+  - Generic suffix removal must be aware of preserved tokens: strip them before suffix check, re-append after
+  - Multi-word abbreviation expansion (e.g., "MED CTR") must happen before single-word to avoid partial matches
+  - Word boundary regex (`\b`) for abbreviation matching prevents partial replacements (e.g., "HOSPITAL" doesn't re-expand "HOSP" inside it)
+  - 38 tests covering: construction (2), uppercase/punctuation (5), abbreviation expansion (3), suffix removal (7), directional preservation (4), campus preservation (5), whitespace (2), PRD acceptance criteria (5), edge cases (5)
+  - Total test count: 534 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-036
+- Implemented: FacilityMatcher class in `asre/facility/matcher.py` with exact alias matching
+- MatchResult dataclass with canonical_id, match_type, score fields
+- Loads FacilityAliasConfig into normalized alias -> canonical_id in-memory lookup
+- Both canonical_name and all aliases are normalized and indexed at construction time
+- match_exact() normalizes input, looks up in index, returns MatchResult or None
+- Case-insensitive comparison via normalization on both sides
+- Files changed: asre/facility/matcher.py (new), tests/unit/test_facility_matcher.py (new)
+- **Learnings for future iterations:**
+  - FacilityMatcher takes FacilityAliasConfig + FacilityNormalizer as constructor args — normalizer is reused for both indexing and input normalization
+  - Index both canonical_name AND aliases — canonical_name is also a valid lookup key after normalization
+  - MatchResult is a simple dataclass, not Pydantic — used as internal return type, not persisted
+  - match_exact returns None for empty/None input (normalizer returns "" for these, which is falsy)
+  - 17 tests covering: construction (2), exact matching (9), MatchResult fields (3), normalization before match (3)
+  - Total test count: 551 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-037
+- Implemented: NPI and CCN matching in `asre/facility/matcher.py` via `match_npi()` and `match_ccn()` methods
+- FacilityMatcher constructor now builds three indexes: alias (normalized name), NPI, and CCN
+- Both methods strip whitespace from input before lookup
+- NPI/CCN matches return MatchResult with match_type='npi'/'ccn' and score=1.0
+- Facilities without NPI/CCN are simply not indexed (no false positives)
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_npi_ccn_matching.py (new)
+- **Learnings for future iterations:**
+  - NPI/CCN indexes are simple dict[str, str] lookups — no normalization needed (identifiers are exact)
+  - Whitespace stripping on both index build and lookup prevents mismatches from trailing spaces
+  - match_npi/match_ccn are separate methods (not combined) to keep match_type clear and allow callers to control cascade order
+  - 21 tests covering: NPI matching (9 — match, no match, None, empty, type, score, whitespace), CCN matching (9 — same pattern), precedence (3 — exact vs NPI, NPI-only facilities, CCN-only facilities)
+  - Total test count: 572 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-038
+- Implemented: Fuzzy matching via rapidfuzz `token_sort_ratio` in `asre/facility/matcher.py`
+- Added `fuzzy_threshold` param to FacilityMatcher constructor (default 0.85, backward compatible)
+- `match_fuzzy()` method normalizes input, compares against all fuzzy candidates, returns best match above threshold
+- `_fuzzy_candidates` list built at construction from both canonical names and aliases (same normalized values as alias_index)
+- rapidfuzz `token_sort_ratio` returns 0-100, normalized to 0-1 by dividing by 100
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_fuzzy_matching.py (new)
+- **Learnings for future iterations:**
+  - rapidfuzz `fuzz.token_sort_ratio(s1, s2)` returns score 0-100, not 0-1 — must normalize
+  - Fuzzy candidates are built alongside alias_index in the same constructor loop to avoid double normalization
+  - `fuzzy_threshold` has a default value so existing callers (from US-036/037) aren't broken
+  - Best-match selection: iterate all candidates, track best score/id, check threshold at end
+  - 14 tests covering: basic matching (3), score behavior (3), best selection (1), edge cases (5), alias+canonical comparison (2)
+  - Total test count: 586 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-039
+- Implemented: Unresolved facility handling in `asre/facility/matcher.py` via `resolve_or_create()` method
+- Added `flags: list[str]` field to `MatchResult` dataclass (default empty list, backward compatible)
+- `resolve_or_create()` cascades through all match tiers: exact alias -> NPI -> CCN -> fuzzy -> create new
+- New facilities get auto-generated `FAC_{uuid}` canonical_id, flagged `FACILITY_NEW_UNREVIEWED`
+- New facility's normalized name added to `_alias_index` and `_fuzzy_candidates` at runtime so subsequent events with same normalized name reuse the facility (no duplicates)
+- Files changed: asre/facility/matcher.py (modified), tests/unit/test_unresolved_facilities.py (new)
+- **Learnings for future iterations:**
+  - `resolve_or_create` is the primary entry point for facility resolution — downstream stages should use this instead of calling individual match methods
+  - Runtime-created facilities are added to both `_alias_index` and `_fuzzy_candidates` to enable both exact and fuzzy reuse
+  - `MatchResult.flags` field uses `field(default_factory=list)` — safe mutable default in dataclass
+  - Second call with same normalized name hits `_alias_index` and returns match_type='exact' (not 'new')
+  - 19 tests covering: creation (5), reuse (4), alias indexing (2), cascade (5), edge cases (3)
+  - Total test count: 605 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-040
+- Implemented: FacilityRegistry class in `asre/facility/registry.py` with FacilityRecord dataclass
+- FacilityRecord holds: canonical_id, canonical_name, facility_type, npi, ccn, aliases, flags — with to_dict() serialization
+- FacilityRegistry loads initial data from FacilityAliasConfig into primary store (dict[canonical_id, FacilityRecord])
+- In-memory indexes: normalized alias -> canonical_id, NPI -> canonical_id, CCN -> canonical_id
+- Lookup methods: lookup_by_alias (normalizes input), lookup_by_npi, lookup_by_ccn
+- Runtime additions: add_facility() creates+indexes new record, add_alias() adds alias to existing facility
+- Persistence: to_records() serializes all facilities, persist(adapter) writes to asre_facility_registry table
+- Files changed: asre/facility/registry.py (new), tests/unit/test_facility_registry.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - FacilityRegistry is separate from FacilityMatcher — registry stores/indexes facilities, matcher does resolution cascade
+  - FacilityRecord tracks facility_type for downstream stale encounter thresholds (US-067)
+  - For persist(), aliases and flags lists must be JSON-serialized before writing (database stores as TEXT/VARCHAR)
+  - `adapter` typed as `Any` in persist() to avoid circular import with IngestAdapter — use explicit `count: int` annotation on return value for mypy strict
+  - add_alias raises ValueError for unknown canonical_id — fail-fast on programming errors
+  - 30 tests covering: construction (4), alias lookup (5), NPI lookup (5), CCN lookup (3), add facility (7), persistence (4), FacilityRecord (2)
+  - Total test count: 635 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-041
+- Implemented: FacilityNormalizationStage in `asre/facility/stage.py` implementing PipelineStage
+- Stage processes each canonical event: normalizes facility_raw via FacilityMatcher.resolve_or_create(), sets facility_canonical_id
+- Cascades through match tiers: exact alias -> NPI -> CCN -> fuzzy -> create new
+- NPI/CCN extracted from event._raw_payload if available
+- New facilities registered in FacilityRegistry with FACILITY_NEW_UNREVIEWED flag
+- StageMetrics tracks records_in, records_out, errors with stage_name="facility_normalize"
+- Files changed: asre/facility/stage.py (new), tests/unit/test_facility_normalization_stage.py (new)
+- **Learnings for future iterations:**
+  - FacilityNormalizationStage takes normalizer, alias_config, and registry as constructor args — these are shared across the pipeline
+  - FacilityMatcher (from US-036-039) handles the full resolution cascade internally via resolve_or_create()
+  - New facilities created by the matcher must ALSO be added to the registry (separate data store from matcher's internal index)
+  - NPI/CCN come from event._raw_payload (the original source record dict), not from CanonicalEvent fields
+  - When testing new facility creation with multiple events, use very distinct names to avoid fuzzy matching between them
+  - 16 tests covering: interface (3), exact matching (2), fuzzy matching (1), new facility creation (3), empty facility (1), mixed batch (1), metrics (3), registry updates (2)
+  - Total test count: 651 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-042
+- Implemented: Facility CLI commands in `asre/cli/main.py` — `asre facilities --unresolved` and `asre facilities resolve <id> --target <target_id>`
+- `facilities` is a Click group with `--unresolved` flag and `--config-path`/`--customer-id` options; `resolve` is a subcommand
+- `--unresolved` reads from asre_facility_registry table, filters by FACILITY_NEW_UNREVIEWED flag in JSON flags column
+- `resolve` verifies both source and target facility exist in the registry before confirming mapping
+- `_get_facility_adapter()` helper creates and connects a PostgresAdapter from customer config
+- Files changed: asre/cli/main.py (modified), tests/unit/test_facility_cli.py (new)
+- **Learnings for future iterations:**
+  - Click groups with `invoke_without_command=True` can handle both flags on the group (--unresolved) and subcommands (resolve)
+  - Group-level options (--config-path, --customer-id) must come BEFORE subcommand in CLI invocation
+  - Use `ctx.ensure_object(dict)` + `ctx.obj` to pass config from group to subcommands via Click context
+  - `sys.exit(1)` in Click commands needs `except SystemExit: raise` in outer try/except to avoid swallowing exit codes
+  - Flags column from DB arrives as JSON string — use `json.loads()` to parse before checking membership
+  - Mock `_get_facility_adapter` to avoid real DB connections in unit tests
+  - 11 tests covering: help output (2), unresolved listing (4), resolve mapping (3), resolve errors (2)
+  - Total test count: 662 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-043
+- Implemented: EncounterStitcher class in `asre/stitch/encounter_stitcher.py` with StitchedEncounter intermediate dataclass
+- Partitions events by patient_key, sorts by event_ts ascending with source type tiebreaker
+- Default tiebreaker: claims > adt > auth (lower index = higher priority)
+- Events within time_window_hours (default 48) of current encounter's last event AND same facility stitch into same encounter
+- Events outside time window OR different facility close current encounter and start new
+- StitchedEncounter tracks: patient_key, facility_canonical_id, events list, last_event_ts (sliding window)
+- Source type extraction from source_system name is prefix-based (adt_*, claims_*, auth_*)
+- Files changed: asre/stitch/encounter_stitcher.py (new), tests/unit/test_encounter_stitcher.py (new)
+- **Learnings for future iterations:**
+  - EncounterStitcher produces StitchedEncounter (intermediate), not the final Encounter dataclass — downstream stages enrich it
+  - StitchedEncounter.add_event() updates last_event_ts for sliding window — time_window is relative to LAST event, not first
+  - Null facility_canonical_id treated as non-matching when facility_must_match=True (events with unresolved facilities don't auto-stitch)
+  - Tiebreaker uses index position in same_timestamp_tiebreaker list (0 = highest priority)
+  - Source type extraction is simple prefix matching — source_system names like "adt_vendor_x" -> "adt"
+  - 20 tests covering: construction (3), patient partitioning (3), time sorting (1), tiebreaker (1), time window stitching (7), encounter output (5)
+  - Total test count: 682 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-044
+- Implemented: Tests for facility matching requirement in stitching — all behavior was already implemented in US-043
+- The `facility_must_match` parameter, null facility handling, and facility comparison logic were all built into EncounterStitcher in US-043
+- Added 10 dedicated tests covering all acceptance criteria: facility_must_match=true (3), facility_must_match=false (4), null facility handling (3)
+- Files changed: tests/unit/test_facility_matching_stitching.py (new), prd.json (updated), progress.txt (updated)
+- **Learnings for future iterations:**
+  - US-043 already implemented facility_must_match as a forward-looking design decision — US-044 only needed test coverage
+  - When `facility_must_match=false`, null facilities stitch together (no facility check at all)
+  - When `facility_must_match=true`, null facilities are treated as non-matching — `None != None` is explicitly handled
+  - 10 tests covering: facility_must_match=true (3 — different facilities separate, same facility same, default value), facility_must_match=false (4 — different facilities same encounter, time window still applies, null facilities stitch, mixed null/set stitch), null handling (3 — null-null no stitch, set-null no stitch, null-set no stitch)
+  - Total test count: 692 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-045
+- Implemented: ED to IP merge in `asre/stitch/encounter_stitcher.py` — ED_ARRIVAL + ADMIT at same facility within time window merges into single encounter with encounter_type=inpatient
+- Added `encounter_type` field to `StitchedEncounter` dataclass, derived from highest-priority patient_class seen across events
+- Added `patient_class_transitions` parameter to `EncounterStitcher` constructor with defaults from SPEC §4.2
+- encounter_type priority: inpatient(0) > observation(1) > ed(2) > outpatient(3) — highest priority wins
+- `_update_encounter_type()` called on every `add_event()` to track the dominant patient_class
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_ed_to_ip_merge.py (new)
+- **Learnings for future iterations:**
+  - encounter_type derivation uses a priority map — inpatient always wins over ed/observation
+  - patient_class_transitions config is stored but not yet used for `new_encounter` action (needed for US-047 IP->IP)
+  - StitchedEncounter now tracks encounter_type alongside existing fields — downstream stages can use it
+  - ED events with patient_class="ed" are simply kept in the encounter event list — no special "supporting" role marking needed at stitch time (that's for the detail table in later stages)
+  - 8 tests covering: merge (1), encounter_type=inpatient (1), ED events kept (1), default transitions (1), different facility (1), outside window (1), ED-only type (1), multiple ED before admit (1)
+  - Total test count: 700 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-046
+- Implemented: OBS to IP conversion detection in `asre/stitch/encounter_stitcher.py`
+- Added `obs_to_ip_conversion: bool` field to `StitchedEncounter` dataclass (default False)
+- Added `_check_obs_to_ip()` method that sets flag to True when OBS_TO_IP event_type is encountered
+- The merge behavior (OBS_START + OBS_TO_IP -> single encounter, type=inpatient) was already handled by existing time window + encounter_type priority logic from US-043/045
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_obs_to_ip_conversion.py (new)
+- **Learnings for future iterations:**
+  - OBS->IP merge was already working via the default patient_class_transitions config and encounter_type priority — only the obs_to_ip_conversion flag was missing
+  - OBS_TO_IP event_type is the signal for setting the flag — checking event_type == "OBS_TO_IP" in add_event() is sufficient
+  - The flag is on StitchedEncounter (intermediate), downstream stages will copy it to the final Encounter dataclass
+  - ED->IP merges correctly do NOT set obs_to_ip_conversion (different event_type)
+  - 7 tests covering: single encounter (1), conversion flag set (1), encounter_type=inpatient (1), default transitions config (1), OBS-only no flag (1), with additional events (1), ED->IP no flag (1)
+  - Total test count: 707 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-047
+- Implemented: IP to IP as new encounter in `asre/stitch/encounter_stitcher.py`
+- Added `has_discharge: bool` field to `StitchedEncounter` to track whether a discharge event has occurred
+- Added `_DISCHARGE_EVENT_TYPES` and `_ADMIT_EVENT_TYPES` class-level sets for event type classification
+- Added `_should_force_new_encounter()` method that checks: (1) current encounter has discharge, (2) incoming event is admit-type, (3) transition rule matches with action=new_encounter
+- Transition check integrated into `_should_stitch()` as the first check (before facility and time window)
+- ED->IP merge and OBS->IP merge still work correctly (their transition action is "merge", not "new_encounter")
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_ip_to_ip_new_encounter.py (new)
+- **Learnings for future iterations:**
+  - The `new_encounter` action in patient_class_transitions requires detecting that the current encounter is "closed" (has a discharge event) before a new admit arrives
+  - Discharge detection uses event_type set membership, not discharge_flag — because discharge_flag may not always be set on all discharge-like events
+  - The transition check must happen BEFORE facility and time window checks — otherwise the event would stitch into the current encounter
+  - ED->IP and OBS->IP are unaffected because their transition action is "merge" and they don't trigger has_discharge first
+  - `_should_force_new_encounter` requires both from_class and to_class to be non-None — events without patient_class won't trigger new_encounter
+  - 9 tests covering: two encounters (1), first encounter contents (1), second encounter contents (1), both inpatient type (1), default config (1), ED->IP still merges (1), OBS->IP still merges (1), different facility (1), supporting events (1)
+  - Total test count: 716 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-048
+- Implemented: Transfer chain detection in `asre/stitch/encounter_stitcher.py`
+- Added `transfer_chain: list[int]` field to `StitchedEncounter` dataclass
+- Added post-stitching `_detect_transfer_chains()` method that scans consecutive encounters per patient for discharge→admit patterns across different facilities within time window
+- Helper methods: `_is_transfer()` checks pairwise transfer conditions, `_get_discharge_ts()` finds latest discharge timestamp, `_assign_transfer_chains()` groups consecutive links into chains
+- Multi-hop transfers (A→B→C) correctly produce 3-element chains shared by all encounters
+- Partial chains handled: if B→C is outside window, only A→B are linked
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_transfer_chain.py (new)
+- **Learnings for future iterations:**
+  - Transfer chain detection is a POST-stitching step — encounters are already separate (different facilities), we just link them
+  - The algorithm builds pairwise links first, then groups consecutive True links into chains
+  - `_is_transfer()` requires: has_discharge on enc_a + different facility + admit within time_window_hours of discharge
+  - `transfer_chain` stores encounter indices (not IDs) — downstream stages will convert to encounter_ids when those are generated (US-050)
+  - No discharge means no transfer — two admits at different facilities without intermediate discharge are NOT a transfer
+  - Same facility encounters are never transfers (even with discharge) — they're IP→IP new encounters handled separately
+  - 10 tests covering: basic A→B transfer (2), no transfer outside window (1), no transfer same facility (1), A→B→C chain (3), partial chain (1), different patients (1), no discharge (1)
+  - Total test count: 726 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-049
+- Implemented: Cancellation event handling in `asre/stitch/encounter_stitcher.py`
+- Added `status` field to `StitchedEncounter` dataclass: "open" (default), "closed" (has discharge), "cancelled" (CANCEL_ADMIT)
+- CANCEL_ADMIT: sets status="cancelled" on the encounter
+- CANCEL_DISCHARGE: clears has_discharge and resets status="open" (encounter reopened)
+- Cancel events attach to the most recent matching encounter for patient at facility via normal stitching rules (they're not admit-type events, so _should_force_new_encounter doesn't trigger)
+- Status derivation: discharge events set status="closed" (unless already cancelled); CANCEL_ADMIT overrides to "cancelled"; CANCEL_DISCHARGE resets to "open"
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_cancellation_events.py (new)
+- **Learnings for future iterations:**
+  - Cancellation events are NOT admit-type, so they bypass the IP→IP new_encounter logic and stitch normally
+  - `_handle_cancellation()` must be called BEFORE discharge tracking in `add_event()` — otherwise CANCEL_DISCHARGE would see has_discharge already reset
+  - Status field on StitchedEncounter is a simple string, not an enum — downstream stages (US-051) will map to final Encounter.status
+  - Test timestamps must be within 48h time window (default) to ensure events stitch into same encounter
+  - 10 tests covering: CANCEL_ADMIT (3 — status, events kept, attaches to recent), CANCEL_DISCHARGE (4 — reopens, clears has_discharge, events kept, attaches correctly), facility matching (1), default status (2 — open, closed)
+  - Total test count: 736 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-050
+- Implemented: Deterministic encounter IDs in `asre/stitch/encounter_stitcher.py`
+- Added `encounter_id` field to `StitchedEncounter` dataclass (default None, populated after stitching)
+- `generate_encounter_id()` method computes SHA-256 hex digest of `patient_key|facility_canonical_id|first_admit_source_record_id`
+- `_get_first_admit_source_record_id()` finds first ADMIT-type event's source_record_id; falls back to first event if no admit
+- Null facility_canonical_id uses empty string in hash input
+- IDs generated as final step in `stitch()` after transfer chain detection
+- Files changed: asre/stitch/encounter_stitcher.py (modified), tests/unit/test_deterministic_encounter_ids.py (new)
+- **Learnings for future iterations:**
+  - encounter_id generation must happen AFTER all stitching is complete (events, transfers, etc.) but before returning
+  - Hash input uses pipe delimiter: `patient_key|facility|source_record_id` to avoid ambiguity
+  - Full SHA-256 hex digest is 64 chars — URL-safe (all hex chars 0-9a-f)
+  - First ADMIT-type event's source_record_id is the anchor — this ensures stability across re-processing
+  - Null facility uses empty string — two encounters at null facility with same patient+source_record_id get same ID
+  - 9 tests covering: encounter_id exists (1), same inputs same ID (1), different source_record_id different ID (1), different patient_key different ID (1), different facility different ID (1), URL-safe hex string (1), first admit source_record_id used (1), null facility (1), stability across runs (1)
+  - Total test count: 745 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-051
+- Implemented: EncounterMetadata dataclass and `build_encounter_metadata()` function in `asre/stitch/metadata.py`
+- Derives encounter_type (inpatient/observation/ed_only/outpatient), status, admit_ts, discharge_ts, los_hours, source_event_ids, source_systems, has_adt/has_claims/has_auth, obs_to_ip_conversion
+- encounter_type maps StitchedEncounter's "ed" -> "ed_only", None -> "outpatient"; inpatient/observation passed through
+- admit_ts: earliest admit/arrival event timestamp; discharge_ts: latest discharge event timestamp (null if open)
+- los_hours computed from (discharge_ts - admit_ts).total_seconds() / 3600
+- Source flags (has_adt/has_claims/has_auth) derived from source_system prefix matching
+- Files changed: asre/stitch/metadata.py (new), tests/unit/test_encounter_metadata.py (new)
+- **Learnings for future iterations:**
+  - EncounterMetadata is a separate dataclass from StitchedEncounter — keeps stitching and metadata derivation decoupled
+  - StitchedEncounter already tracks encounter_type and status; metadata builder maps "ed" to "ed_only" for the output schema
+  - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES are duplicated from StitchedEncounter as module-level constants — could be shared later
+  - Source type detection uses same prefix matching pattern as EncounterStitcher._extract_source_type()
+  - 23 tests covering: encounter_type (6), status (3), timestamps (6), source derivation (6), obs_to_ip (2)
+  - Total test count: 768 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-052
+- Implemented: StitchStage in `asre/stitch/stage.py` implementing PipelineStage
+- Processes EventBatch of canonical events via EncounterStitcher, produces list of StitchedEncounter on `stage.encounters`
+- Builds EncounterMetadata for each encounter on `stage.encounter_metadata`
+- Reads encounter_stitching config from PipelineContext.config (time_window_hours, facility_must_match, same_timestamp_tiebreaker, patient_class_transitions)
+- Falls back to EncounterStitcher defaults when config keys missing
+- Records stage metrics: records_in (events), records_out (encounters), stage_name="stitch"
+- Tracks transfers_detected (unique transfer chains) and cancellations_processed (CANCEL_ADMIT/CANCEL_DISCHARGE events)
+- Files changed: asre/stitch/stage.py (new), tests/unit/test_stitch_stage.py (new)
+- **Learnings for future iterations:**
+  - StitchStage stores results on `self.encounters` and `self.encounter_metadata` — downstream stages (dedup, reconcile, score) access these
+  - _build_stitcher() selectively passes config keys as kwargs to EncounterStitcher — only passes keys that exist in config to let defaults apply
+  - Transfer count uses unique chain tuples in a set — each chain is counted once regardless of how many encounters share it
+  - Cancellation count scans input events directly (not encounters) since cancellation events are attached to encounters during stitching
+  - Test timestamps must be within 48h default time_window_hours — events farther apart will produce separate encounters
+  - 18 tests covering: interface (3), processing (6), metrics (6), config-driven (2), end-to-end (1)
+  - Total test count: 786 passed + 16 skipped (integration tests skip without Postgres)
+---
+
+## 2026-02-02 - US-053
+- Implemented Deduplicator class in `asre/dedup/deduplicator.py`
+- Identifies duplicate events by configurable match_fields + time_tolerance_minutes
+- Uses union-find algorithm to transitively cluster duplicates within time window
+- Groups events by match key (default: patient_key, event_type, facility_canonical_id), then checks pairwise time proximity
+- Files changed: `asre/dedup/deduplicator.py` (new), `tests/unit/test_deduplicator.py` (new)
+- **Learnings for future iterations:**
+  - Deduplicator.find_duplicates() returns list of duplicate groups (each group is list of 2+ events)
+  - Union-find pattern used for transitive duplicate clustering (A~B, B~C => {A,B,C})
+  - Match key extraction uses getattr on CanonicalEvent fields; custom match_fields supported
+  - Events sorted by event_ts within each match group for efficient comparison
+  - Boundary condition: events exactly at time_tolerance_minutes apart ARE considered duplicates (<=)
+  - Pre-existing mypy errors in 6 other test files; new dedup files pass mypy cleanly
+---
+
+## 2026-02-02 - US-054
+- Implemented `resolve_duplicates()` method on Deduplicator class
+- When duplicates found, keeps event from highest timestamp_priority source (ADT=100 > claims=80 > auth=40)
+- If same source priority, keeps earliest ingested record (by ingested_at)
+- Files changed: `asre/dedup/deduplicator.py` (added resolve_duplicates, _source_type), `tests/unit/test_dedup_resolution.py` (new, 7 tests)
+- **Learnings for future iterations:**
+  - resolve_duplicates() returns tuple of (kept_events, duplicate_events) — kept has one per group, duplicates has the rest
+  - _source_type() extracts prefix from source_system name (e.g., "adt_vendor_x" -> "adt"); unknown sources get priority 0
+  - Sort key for resolution: (-priority, ingested_at) — highest priority first, then earliest ingestion
+  - source_priority dict comes from ReconciliationConfig.timestamp_priority in config schema
+---
+
+## 2026-02-02 - US-055
+- What was implemented: Mark duplicates for audit — added `role_in_encounter` field to CanonicalEvent and `mark_roles()` static method to Deduplicator
+- Files changed:
+  - `asre/models/canonical_event.py` — added `role_in_encounter: str | None = None` field
+  - `asre/dedup/deduplicator.py` — added `mark_roles(kept, duplicates)` static method
+  - `tests/unit/test_dedup_audit.py` — 6 new tests covering role marking
+  - `prd.json` — marked US-055 as passes: true
+- **Learnings for future iterations:**
+  - `role_in_encounter` is on CanonicalEvent (not StitchedEncounter); values: admit_anchor, discharge_anchor, supporting, conflicting, duplicate
+  - `Deduplicator.mark_roles(kept, duplicates)` is a static method — call after `resolve_duplicates()` to set roles
+  - Kept events retain their existing role_in_encounter; duplicates get overwritten to "duplicate"
+  - Pre-existing mypy errors in 6 test files (12 errors) — not related to dedup changes
+---
+
+## 2026-02-02 - US-056
+- What was implemented: Encounter-level dedup — merges overlapping encounters for the same patient at the same facility
+- Files changed:
+  - `asre/dedup/deduplicator.py` — added `merge_overlapping_encounters()` method and helpers (`_earliest_event_ts`, `_latest_event_ts`, `_encounters_overlap`, `_merge_group`, `_merge_two`)
+  - `tests/unit/test_encounter_dedup.py` — 10 new tests covering: overlapping merge, non-overlapping stay separate, different facility/patient stay separate, earlier ID stability, event combination, open encounter overlap, three-way transitive merge, empty/single input
+  - `prd.json` — marked US-056 as passes: true
+- **Learnings for future iterations:**
+  - StitchedEncounter._DISCHARGE_EVENT_TYPES is a dataclass field with default_factory (instance attribute), not a class attribute — use `encounter.has_discharge` flag instead of accessing the type set directly
+  - TYPE_CHECKING import pattern works for avoiding circular imports between dedup and stitch modules
+  - Overlap detection for open encounters: if has_discharge=False, treat as extending to infinity (overlaps with any later encounter at same patient+facility)
+  - Pre-existing mypy errors (12 in 6 files) are not related to dedup changes — my files pass clean
+---
+
+## 2026-02-02 - US-057
+- What was implemented: DedupStage pipeline stage that orchestrates event-level and encounter-level dedup
+- Files changed:
+  - `asre/dedup/stage.py` — new DedupStage class implementing PipelineStage; runs event-level dedup (find_duplicates -> resolve_duplicates -> mark_roles) then encounter-level dedup (merge_overlapping_encounters)
+  - `tests/unit/test_dedup_stage.py` — 16 tests covering: interface (subclass, run method, return type), processing (empty, no-dupes passthrough, event-level dedup, encounter-level merge), metrics (events_before, events_after, duplicates_found, encounters_merged, stage_name, status), config (source priority, default config), end-to-end mixed scenario
+  - `prd.json` — marked US-057 as passes: true
+- **Learnings for future iterations:**
+  - DedupStage follows same pattern as StitchStage: encounters_in set externally, results stored on stage.encounters
+  - Source priority for dedup comes from `reconciliation.timestamp_priority` config section, defaults to adt=100, claims=80, auth=40
+  - Dedup config (match_fields, time_tolerance_minutes) comes from `deduplication` config section
+  - Event-level dedup runs per-encounter; encounter-level dedup runs across all encounters
+  - events_after counts non-duplicate events (role_in_encounter != "duplicate") since duplicates are kept for audit
+---
+
+## 2026-02-02 - US-058
+- What was implemented: Reconciler class with timestamp selection by source priority
+- Files changed:
+  - `asre/reconcile/reconciler.py` (new) — Reconciler class, ReconciledTimestamps dataclass, _extract_source_type helper
+  - `tests/unit/test_reconciler.py` (new) — 6 tests covering ADT>claims priority, discharge selection, claims-only, custom priority, open encounters, auth lowest priority
+- **Learnings for future iterations:**
+  - Reconciler follows same constructor pattern as EncounterStitcher: configurable via kwargs with sensible defaults
+  - _extract_source_type is duplicated from Deduplicator._source_type (static method) — consider extracting to shared utility if needed again
+  - ReconciledTimestamps is a dataclass (not dict) for type safety — downstream stages should use its fields directly
+  - Tests use _make_event and _make_encounter helpers defined at test module level for clean test construction
+---
+
+## 2026-02-02 - US-059
+- What was implemented: Classification resolution by source priority in Reconciler
+- Files changed:
+  - `asre/reconcile/reconciler.py` (modified) — Added ReconciledClassification dataclass, reconcile_classification() method, _resolve_encounter_type(), _resolve_field(), _resolve_admitting_diagnosis(), _aggregate_diagnosis_codes() helpers, _DEFAULT_CLASSIFICATION_PRIORITY constant
+  - `tests/unit/test_reconciler.py` (modified) — Added 8 tests: encounter_type from claims over ADT, DRG from claims, payer from highest priority, principal/admitting diagnosis, diagnosis code aggregation, ADT-only encounter type, auth not overriding
+  - `prd.json` (modified) — US-059 passes: true
+- **Learnings for future iterations:**
+  - ReconciledClassification mirrors ReconciledTimestamps pattern: dataclass return type for type safety
+  - Admitting diagnosis is special-cased to come from ADT specifically, not from highest classification priority source
+  - Diagnosis code aggregation deduplicates by code value across sources, with higher-priority source codes appearing first
+  - _resolve_field() is generic: takes field_name string and uses getattr to pick from events — reusable for any field
+  - Test helper _make_event extended with drg, principal_diagnosis, diagnosis_codes, payer_id params for US-059 tests
+---
+
+## 2026-02-02 - US-060
+- What was implemented: Auth reconciliation rules — `reconcile_auth()` method on Reconciler class
+- Files changed:
+  - `asre/reconcile/reconciler.py` — added `reconcile_auth()` method
+  - `tests/unit/test_reconciler.py` — added `TestAuthReconciliationRules` test class (5 tests)
+  - `prd.json` — marked US-060 passes: true
+- **Learnings for future iterations:**
+  - Auth reconciliation is a flag-based check: presence of auth events without ADT/claims triggers AUTH_WITHOUT_ADMIT
+  - Reconciler.reconcile_auth(encounter) returns list[str] of flags (not a dataclass); AUTH_WITHOUT_ADMIT is the only flag for now
+  - Auth priority enforcement for timestamps/classification was already implemented in US-058/US-059 via default priority maps
+  - _extract_source_type() reused for detecting auth vs adt vs claims source types in reconcile_auth
+  - Auth events are "supporting signals" — they validate encounters but never anchor them (no new encounter creation from auth alone)
+---
+
+## 2026-02-02 - US-061
+- What was implemented: Flag timestamp mismatches — `flag_timestamp_mismatches()` method on Reconciler class
+- Files changed:
+  - `asre/reconcile/reconciler.py` — added `flag_timestamp_mismatches()` method and `_earliest_ts()` static helper
+  - `tests/unit/test_reconciler.py` — added `TestTimestampMismatchFlag` test class (5 tests)
+  - `prd.json` — marked US-061 passes: true
+- **Learnings for future iterations:**
+  - TIMESTAMP_MISMATCH compares ADT vs claims timestamps for both admit and discharge event types
+  - Only flags when BOTH sources are present — single-source encounters cannot have mismatches
+  - Returns early after first mismatch found (admit checked first, then discharge)
+  - `_earliest_ts()` finds earliest timestamp among events matching given types per source, used for comparison
+  - Tolerance is passed as parameter (not read from config); caller (ReconcileStage) will pass from config
+---
+
+## 2026-02-02 - US-062
+- What was implemented: Four new flag methods in Reconciler for common data quality issue detection
+  - `flag_missing_discharge(encounter, now, open_threshold_hours=48)` — MISSING_DISCHARGE when admit present, no discharge, open > 48h
+  - `flag_orphan_discharge(encounter)` — ORPHAN_DISCHARGE when discharge event exists with no matching admit
+  - `flag_claims_only(encounter)` — CLAIMS_ONLY_ENCOUNTER when claims events but zero ADT events
+  - `flag_adt_only(encounter, now, claims_lag_days=45)` — ADT_ONLY_ENCOUNTER when ADT events but zero claims beyond lag
+  - AUTH_WITHOUT_ADMIT was already implemented in US-060
+- Files changed:
+  - `asre/reconcile/reconciler.py` — Added 4 new methods + updated docstring
+  - `tests/unit/test_reconciler.py` — Added 16 new tests across 5 test classes
+- **Learnings for future iterations:**
+  - All flag methods follow the same pattern: return `list[str]`, check event types or source types, append flag string if condition met
+  - StitchedEncounter.has_discharge is reliable for checking discharge presence (set by add_event)
+  - _ADMIT_EVENT_TYPES and _DISCHARGE_EVENT_TYPES constants defined at module level in reconciler.py
+  - Time-based flags (MISSING_DISCHARGE, ADT_ONLY_ENCOUNTER) accept `now` parameter for testability instead of using datetime.now() directly
+  - Claims lag concept: ADT-only encounters should only be flagged after sufficient time has passed for claims to arrive (default 45 days)
+---
+
+## 2026-02-02 - US-063
+- Implemented: ReconcileStage in `asre/reconcile/stage.py` implementing PipelineStage
+- ReconciledEncounter wrapper class holds reconciliation results (timestamps, classification, flags) alongside the original StitchedEncounter
+- Stage orchestrates all reconciler methods: reconcile_timestamps, reconcile_classification, reconcile_auth, flag_timestamp_mismatches, flag_missing_discharge, flag_orphan_discharge, flag_claims_only, flag_adt_only
+- Tracks metrics: encounters_reconciled, flags_generated (dict[str, int] by flag type), auth_without_admit_count
+- Supports config overrides for timestamp_priority, classification_priority, timestamp_tolerance_hours
+- Files changed:
+  - `asre/reconcile/stage.py` — New file: ReconcileStage + ReconciledEncounter
+  - `tests/unit/test_reconcile_stage.py` — 8 tests across 3 test classes
+- **Learnings for future iterations:**
+  - ReconcileStage follows same pattern as DedupStage: encounters_in set externally, results on stage.encounters
+  - ReconciledEncounter uses __getattr__ delegation to underlying StitchedEncounter for transparent attribute access
+  - Stage collects flags from all reconciler methods into a single confidence_flags list per encounter
+  - flags_generated dict on stage tracks aggregate flag counts across all encounters for metrics reporting
+  - Config path: `context.config["reconciliation"]["timestamp_tolerance_hours"]` (default 24)
+---
