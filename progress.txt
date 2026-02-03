@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- CLI diagnostic commands in `asre/cli/main.py`: `status`, `inspect run/encounter/errors`; each subcommand has its own `--config-path`/`--customer-id` options (not on parent group) for flexible CLI/test invocation; `_get_diagnostic_adapter()` creates connected adapter for read-only queries
+- ErrorToleranceChecker in `asre/pipeline/error_tolerance.py`: computes failed_event_rate = failed/total, raises FailedEventRateExceededError if rate >= threshold; PipelineRunner._check_error_tolerance() aggregates cumulative errors/records_in from self.stage_metrics after each stage
+- PipelineRunner.run() iterates `self._stages.keys()` (not _STAGE_ORDER) to support tests replacing _stages with custom OrderedDicts
 - RunMetricsWriter in `asre/observability/run_metrics_writer.py`: writes per-stage metrics to asre_run_metrics table; created by PipelineRunner in run() when adapter is available; ensure_table() creates DDL, write_metrics() batch-writes after all stages complete; metrics collected via stage.metrics.to_dict() already in self.stage_metrics list
 - AuditLogger in `asre/pipeline/audit.py`: writes to asre_audit_log table; created by PipelineRunner and passed via context.config["audit_logger"]; log() for single entries, log_batch() for multiple; ensure_table() creates DDL
 - PipelineRunner sets up audit_logger in run() before stage loop when adapter is available; stages access via context.config.get("audit_logger")
@@ -1480,4 +1483,33 @@
   - PipelineRunner already collects stage.metrics.to_dict() into self.stage_metrics — just needed to wire up persistence
   - Metrics are written AFTER the stage loop but BEFORE checkpoint mark_completed — ensures metrics are persisted even if checkpoint fails
   - Total test count: 1029 passed (unit tests)
+---
+
+## 2026-02-02 - US-077
+- Implemented pipeline-level error tolerance
+- Files changed:
+  - `asre/pipeline/error_tolerance.py` (new): ErrorToleranceChecker class and FailedEventRateExceededError
+  - `asre/pipeline/runner.py`: Added _check_error_tolerance() and _get_fail_threshold() methods; changed stage loop to iterate self._stages.keys() instead of _STAGE_ORDER
+  - `tests/unit/test_pipeline_error_tolerance.py` (new): 14 tests covering ErrorToleranceChecker and PipelineRunner integration
+  - `prd.json`: Marked US-077 as passing
+- **Learnings for future iterations:**
+  - PipelineRunner loop was iterating _STAGE_ORDER (module-level constant) instead of self._stages.keys() — fixed to support tests replacing _stages with custom dicts
+  - Error tolerance uses cumulative metrics across all completed stages: sum(records_in) and sum(errors) from self.stage_metrics
+  - Threshold comes from alerting.thresholds.failed_event_rate_fail in config (default 0.05)
+  - _get_fail_threshold() handles both Pydantic model and plain dict config formats
+  - Total test count: 1043 passed (unit tests)
+---
+## 2026-02-02 - US-078
+- Implemented CLI diagnostic commands: `asre status`, `asre inspect run <run_id>`, `asre inspect encounter <id>`, `asre inspect errors --last-run`
+- Files changed: asre/cli/main.py, tests/unit/test_cli_diagnostics.py (new), prd.json
+- `_get_diagnostic_adapter()` helper creates connected adapter for read-only diagnostic queries
+- `status` queries asre_checkpoints for latest run + asre_run_metrics for summary stats
+- `inspect run` queries asre_run_metrics filtered by run_id, shows tabular per-stage breakdown
+- `inspect encounter` queries admission_events_unified + asre_encounters_detail for full encounter view
+- `inspect errors` queries asre_checkpoints for latest run_id then asre_audit_log for error entries
+- **Learnings for future iterations:**
+  - Click groups with options: if options are on the group, they must come BEFORE the subcommand name in CLI invocation; placing config options on each subcommand individually is more flexible for testing
+  - Existing `asre run --mode full|incremental` already worked from prior stories, no changes needed
+  - `adapter.read_source(source_name, query, params)` is the standard pattern for all diagnostic queries
+  - Total test count: 1054 passed (unit tests)
 ---

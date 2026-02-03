@@ -165,6 +165,267 @@ def test_connection() -> None:
     click.echo("Not yet implemented.")
 
 
+def _get_diagnostic_adapter(config_path: str, customer_id: str) -> Any:
+    """Create and connect a database adapter for diagnostic queries.
+
+    Args:
+        config_path: Root config directory path.
+        customer_id: Customer subdirectory name.
+
+    Returns:
+        Connected IngestAdapter instance.
+    """
+    from asre.ingest.postgres import PostgresAdapter
+
+    config = load_config(config_path, customer_id)
+    adapter = PostgresAdapter(config.warehouse.connection)
+    adapter.connect()
+    return adapter
+
+
+@cli.command("status")
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def status_command(config_path: str, customer_id: str) -> None:
+    """Show last run status and summary."""
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            # Get latest run from checkpoints
+            runs: list[dict[str, Any]] = adapter.read_source(
+                "asre_checkpoints",
+                "SELECT * FROM asre_checkpoints ORDER BY updated_at DESC LIMIT 1",
+            )
+            if not runs:
+                click.echo("No pipeline runs found.")
+                return
+
+            run = runs[0]
+            run_id: str = run["run_id"]
+            click.echo(f"Last run: {run_id}")
+            click.echo(f"  Status: {run['status']}")
+            click.echo(f"  Last stage: {run['last_completed_stage']}")
+            click.echo(f"  Updated: {run['updated_at']}")
+            if run.get("error"):
+                click.echo(f"  Error: {run['error']}")
+
+            # Get stage metrics for the run
+            metrics: list[dict[str, Any]] = adapter.read_source(
+                "asre_run_metrics",
+                "SELECT * FROM asre_run_metrics WHERE run_id = :rid ORDER BY stage_name",
+                {"rid": run_id},
+            )
+            if metrics:
+                total_in = sum(m.get("records_in", 0) or 0 for m in metrics)
+                total_out = sum(m.get("records_out", 0) or 0 for m in metrics)
+                total_errors = sum(m.get("errors", 0) or 0 for m in metrics)
+                click.echo(f"  Stages: {len(metrics)}")
+                click.echo(
+                    f"  Total: {total_in} in / {total_out} out / {total_errors} errors"
+                )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.group("inspect", invoke_without_command=True)
+@click.pass_context
+def inspect_group(ctx: click.Context) -> None:
+    """Inspect pipeline results."""
+    ctx.ensure_object(dict)
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@inspect_group.command("run")
+@click.argument("run_id")
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def inspect_run(run_id: str, config_path: str, customer_id: str) -> None:
+    """Show per-stage metrics for a pipeline run.
+
+    RUN_ID is the pipeline run identifier (e.g., run_20250101_120000).
+    """
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            metrics: list[dict[str, Any]] = adapter.read_source(
+                "asre_run_metrics",
+                "SELECT * FROM asre_run_metrics WHERE run_id = :rid ORDER BY stage_name",
+                {"rid": run_id},
+            )
+            if not metrics:
+                click.echo(f"No metrics found for run {run_id}.")
+                return
+
+            click.echo(f"Run: {run_id}")
+            click.echo(
+                f"{'Stage':<20} {'In':>8} {'Out':>8} {'Errors':>8} {'Status':<12}"
+            )
+            click.echo("-" * 60)
+            for m in metrics:
+                click.echo(
+                    f"{m.get('stage_name', ''):<20} "
+                    f"{m.get('records_in', 0):>8} "
+                    f"{m.get('records_out', 0):>8} "
+                    f"{m.get('errors', 0):>8} "
+                    f"{m.get('status', ''):<12}"
+                )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@inspect_group.command("encounter")
+@click.argument("encounter_id")
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def inspect_encounter(encounter_id: str, config_path: str, customer_id: str) -> None:
+    """Show encounter details with all source events.
+
+    ENCOUNTER_ID is the encounter identifier.
+    """
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            # Get encounter record
+            encounters: list[dict[str, Any]] = adapter.read_source(
+                "admission_events_unified",
+                "SELECT * FROM admission_events_unified WHERE encounter_id = :eid",
+                {"eid": encounter_id},
+            )
+            if not encounters:
+                click.echo(f"Encounter {encounter_id} not found.")
+                return
+
+            enc = encounters[0]
+            click.echo(f"Encounter: {enc['encounter_id']}")
+            click.echo(f"  Patient: {enc.get('patient_key', '')}")
+            click.echo(f"  Type: {enc.get('encounter_type', '')}")
+            click.echo(f"  Status: {enc.get('status', '')}")
+            click.echo(f"  Facility: {enc.get('facility_name', '')}")
+            click.echo(f"  Admit: {enc.get('admit_ts', '')}")
+            click.echo(f"  Discharge: {enc.get('discharge_ts', '')}")
+            click.echo(f"  Confidence: {enc.get('confidence_score', '')}")
+
+            # Get source events
+            events: list[dict[str, Any]] = adapter.read_source(
+                "asre_encounters_detail",
+                "SELECT * FROM asre_encounters_detail WHERE encounter_id = :eid ORDER BY event_ts",
+                {"eid": encounter_id},
+            )
+            if events:
+                click.echo(f"\n  Events ({len(events)}):")
+                for evt in events:
+                    click.echo(
+                        f"    {evt.get('event_id', ''):<20} "
+                        f"{evt.get('event_type', ''):<20} "
+                        f"{evt.get('event_ts', ''):<24} "
+                        f"{evt.get('source_system', ''):<20} "
+                        f"{evt.get('role_in_encounter', '')}"
+                    )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@inspect_group.command("errors")
+@click.option(
+    "--last-run",
+    is_flag=True,
+    default=False,
+    help="Show errors from the most recent pipeline run.",
+)
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def inspect_errors(last_run: bool, config_path: str, customer_id: str) -> None:
+    """Show failed events from a pipeline run."""
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            if last_run:
+                # Get latest run_id
+                runs: list[dict[str, Any]] = adapter.read_source(
+                    "asre_checkpoints",
+                    "SELECT run_id FROM asre_checkpoints ORDER BY updated_at DESC LIMIT 1",
+                )
+                if not runs:
+                    click.echo("No pipeline runs found.")
+                    return
+                run_id: str = runs[0]["run_id"]
+            else:
+                click.echo("Specify --last-run to view errors from the most recent run.")
+                return
+
+            # Query audit log for error entries
+            errors: list[dict[str, Any]] = adapter.read_source(
+                "asre_audit_log",
+                "SELECT * FROM asre_audit_log WHERE run_id = :rid AND detail LIKE :pat ORDER BY timestamp",
+                {"rid": run_id, "pat": "%"},
+            )
+            if not errors:
+                click.echo(f"No errors found for run {run_id}.")
+                return
+
+            click.echo(f"Errors for run {run_id} ({len(errors)} entries):")
+            for err in errors:
+                click.echo(
+                    f"  [{err.get('action', '')}] {err.get('entity_type', '')}/"
+                    f"{err.get('entity_id', '')}: {err.get('detail', '')}"
+                )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
 @cli.group("facilities", invoke_without_command=True)
 @click.option(
     "--unresolved",
