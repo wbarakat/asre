@@ -1,5 +1,6 @@
 ## Codebase Patterns
 - EpisodeStitcher in `asre/episode/episode_stitcher.py`: stitch(encounters) returns list[_EpisodeGroup]; partitions by patient_key, sorts by admit_ts, checks 4 linkage rules in order: readmission (both acute, within window), post-acute (prior acute, current non-acute, within window), ED bounce-back (current ed_only, within window), planned return (same facility, within window but beyond readmission window for acute-to-acute); _EpisodeGroup accumulates encounter_ids and encounters; linkage checks against last discharged encounter in group
+- _EpisodeGroup tracks `includes_readmission: bool` (default False); _try_link() returns linkage type string ("readmission", "post_acute", "ed_bounceback", "planned_return") or None — use this pattern to add more metadata flags (e.g., includes_post_acute)
 - dbt schema tests defined in `dbt_project/models/marts/schema.yml` (version 2 format); generic tests (unique, not_null, accepted_values, relationships) applied per-column; relationships test uses `to: ref('model_name')` and `field: column_name`
 - QualityMetricComputer in `asre/quality/metrics.py`: compute() takes encounters + stage_metrics + counts, returns dict[str, float] of 12 metrics; to_records() converts to list of row dicts for asre_quality_metrics table; flag-based rates use _FLAG_METRIC_MAP for flag->metric_key mapping; low_confidence_rate uses < 0.60 threshold
 - Migration scripts in `asre/migration/versions/` follow `_NNN_description.py` naming; each has `description` attr and `upgrade(adapter)` function; use `CREATE TABLE IF NOT EXISTS` for idempotency; when adding new migrations, update hardcoded version assertions in `tests/unit/test_migrator.py` and `tests/integration/test_migrator_integration.py`
@@ -1636,4 +1637,17 @@
   - Linkage requires a prior discharged encounter; open encounters (no discharge_ts) cannot anchor linkage
   - _EpisodeGroup is a mutable accumulator with encounter_ids and encounters lists; _last_discharged() finds the anchor for gap computation
   - Tests must use different facility_canonical_ids when testing rule isolation (e.g., readmission-only) to avoid planned return linkage at same facility
+---
+
+## 2026-02-03 - US-087
+- What was implemented: Readmission linkage metadata tracking on _EpisodeGroup
+- Added `includes_readmission: bool` field to `_EpisodeGroup` (default False)
+- Refactored `_try_link()` from returning `bool` to returning `str | None` (linkage rule name), enabling metadata tracking for all linkage types
+- When readmission rule fires, `includes_readmission` is set to True on the group
+- Files changed: asre/episode/episode_stitcher.py (modified), tests/unit/test_readmission_linkage.py (new), prd.json (updated)
+- **Learnings for future iterations:**
+  - `_try_link()` now returns linkage type strings: "readmission", "post_acute", "ed_bounceback", "planned_return", or None — this pattern enables tracking any linkage metadata (includes_post_acute in US-088)
+  - `includes_readmission` on `_EpisodeGroup` defaults to False, set to True on first readmission linkage; subsequent encounters in the same episode don't reset it
+  - 6 tests covering: within window (1), outside window (1), both-must-be-acute (1), first admission (1), boundary (1), chain with readmission (1)
+  - Total test count: 1180 passed (1174 existing + 6 new)
 ---
