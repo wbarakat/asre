@@ -1927,3 +1927,17 @@
   - CLI dry_run is passed through _create_pipeline_runner as a kwarg, which sets pipeline_config["dry_run"] = True
   - Click's envvar parameter on is_flag option handles ASRE_DRY_RUN=true automatically
 ---
+
+## 2026-02-02 - US-105
+- What was implemented: Lightweight HTTP health check endpoint using Python stdlib http.server
+- Files changed:
+  - `asre/observability/health.py` (NEW) - PipelineHealthState + HealthCheckServer classes
+  - `tests/unit/test_health_check.py` (NEW) - 11 tests covering state tracking, HTTP responses, content type
+  - `Dockerfile` - Updated HEALTHCHECK from process check to HTTP GET on /health, added EXPOSE 8080
+  - `prd.json` - Marked US-105 passes: true
+- **Learnings for future iterations:**
+  - Python's HTTPServer.server_bind() sets self.server_port as an attribute - don't define a property with the same name on subclasses or you get AttributeError (property has no setter)
+  - Use port=0 in tests to let OS assign random available port, then read server.server_port for the actual port
+  - Use threading.Thread(daemon=True) for test HTTP servers to avoid blocking on shutdown
+  - PipelineHealthState uses threading.Lock for thread safety since health server runs in a separate thread
+---
