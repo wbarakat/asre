@@ -9,6 +9,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+_CORE_REQUIRED_ENV_VARS: tuple[str, ...] = (
+    "ASRE_CUSTOMER_ID",
+    "ASRE_CONFIG_PATH",
+)
+
 REQUIRED_ENV_VARS: list[str] = [
     "ASRE_CUSTOMER_ID",
     "ASRE_CONFIG_PATH",
@@ -21,6 +26,8 @@ OPTIONAL_ENV_VARS: list[str] = [
     "ASRE_LOG_LEVEL",
     "ASRE_ALERT_WEBHOOK_URL",
     "ASRE_DRY_RUN",
+    "ASRE_REQUIRE_UTF8",
+    "ASRE_LICENSE_KEY",
 ]
 
 
@@ -55,12 +62,20 @@ class EnvValidationResult:
         )
 
 
-def validate_env_vars() -> EnvValidationResult:
+def validate_env_vars(
+    *,
+    overrides: dict[str, str] | None = None,
+    require_warehouse: bool = True,
+) -> EnvValidationResult:
     """Validate that all required ASRE environment variables are set.
 
     Checks each variable in REQUIRED_ENV_VARS against the current
     environment. Variables that are set to an empty string are treated
     as missing.
+
+    Args:
+        overrides: Optional explicit values used when env vars are unset.
+        require_warehouse: Whether warehouse env vars must be present.
 
     Returns:
         EnvValidationResult with lists of missing and present vars.
@@ -68,9 +83,17 @@ def validate_env_vars() -> EnvValidationResult:
     missing: list[str] = []
     present: list[str] = []
 
-    for var in REQUIRED_ENV_VARS:
+    overrides = overrides or {}
+
+    required_vars = list(_CORE_REQUIRED_ENV_VARS)
+    if require_warehouse:
+        required_vars.extend(["ASRE_WAREHOUSE_TYPE", "ASRE_WAREHOUSE_CREDENTIALS"])
+
+    for var in required_vars:
         value = os.environ.get(var)
-        if value is None or value.strip() == "":
+        if (value is None or value.strip() == "") and var in overrides:
+            value = overrides[var]
+        if value is None or str(value).strip() == "":
             missing.append(var)
         else:
             present.append(var)

@@ -6,8 +6,11 @@ import json
 from datetime import datetime
 from typing import Any
 
+snowflake_connect: Any | None
 try:
-    from snowflake.connector import connect as snowflake_connect
+    from snowflake.connector import connect as _snowflake_connect
+
+    snowflake_connect = _snowflake_connect
 except ImportError:
     snowflake_connect = None
 
@@ -78,7 +81,8 @@ class SnowflakeAdapter(IngestAdapter):
         Snowflake VARIANT and ARRAY columns are returned as their native
         string representations. Downstream stages handle JSON parsing.
         """
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             if params:
@@ -94,7 +98,8 @@ class SnowflakeAdapter(IngestAdapter):
 
     def get_watermark(self, source_name: str) -> datetime | None:
         """Retrieve the last watermark for a source from asre_metadata."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             cursor.execute(
@@ -110,7 +115,8 @@ class SnowflakeAdapter(IngestAdapter):
 
     def set_watermark(self, source_name: str, watermark: datetime) -> None:
         """Update the watermark for a source in asre_metadata using MERGE."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         key = f"watermark_{source_name}"
         value = watermark.isoformat()
         cursor = self._connection.cursor()
@@ -128,10 +134,33 @@ class SnowflakeAdapter(IngestAdapter):
 
     def execute_ddl(self, ddl: str) -> None:
         """Execute a DDL statement."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             cursor.execute(ddl)
+        finally:
+            cursor.close()
+
+    def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
+        """Execute a parameterized DML statement.
+
+        Translates :name style parameters to Snowflake's %s style.
+        """
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
+        cursor = self._connection.cursor()
+        try:
+            if params:
+                import re
+                ordered_keys: list[str] = []
+                def _replace(match: re.Match[str]) -> str:
+                    ordered_keys.append(match.group(1))
+                    return "%s"
+                translated = re.sub(r":(\w+)", _replace, statement)
+                cursor.execute(translated, tuple(params[k] for k in ordered_keys))
+            else:
+                cursor.execute(statement)
         finally:
             cursor.close()
 
@@ -146,11 +175,12 @@ class SnowflakeAdapter(IngestAdapter):
         """
         if not records:
             return 0
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
 
         columns = list(records[0].keys())
         col_list = ", ".join(columns)
-        val_list = ", ".join(["%s"] * len(columns))
+        val_list = ", ".join(f"%({col})s" for col in columns)
         stmt = f"INSERT INTO {table_name} ({col_list}) VALUES ({val_list})"
 
         cursor = self._connection.cursor()

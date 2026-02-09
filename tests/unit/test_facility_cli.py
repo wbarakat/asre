@@ -169,7 +169,8 @@ class TestFacilitiesResolve:
             }],
         ]
 
-        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter):
+        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter), \
+             patch("asre.cli.main._validate_license_or_exit"):
             runner = CliRunner()
             result = runner.invoke(cli, [
                 "facilities",
@@ -188,7 +189,8 @@ class TestFacilitiesResolve:
         mock_adapter = MagicMock()
         mock_adapter.read_source.return_value = []
 
-        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter):
+        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter), \
+             patch("asre.cli.main._validate_license_or_exit"):
             runner = CliRunner()
             result = runner.invoke(cli, [
                 "facilities",
@@ -219,7 +221,8 @@ class TestFacilitiesResolve:
             [],
         ]
 
-        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter):
+        with patch("asre.cli.main._get_facility_adapter", return_value=mock_adapter), \
+             patch("asre.cli.main._validate_license_or_exit"):
             runner = CliRunner()
             result = runner.invoke(cli, [
                 "facilities",

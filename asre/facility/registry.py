@@ -27,6 +27,7 @@ class FacilityRecord:
     ccn: str | None = None
     aliases: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    address: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for persistence."""
@@ -38,6 +39,7 @@ class FacilityRecord:
             "facility_type": self.facility_type,
             "aliases": self.aliases,
             "flags": self.flags,
+            "address": self.address,
         }
 
 
@@ -70,6 +72,7 @@ class FacilityRegistry:
                 npi=facility.npi,
                 ccn=facility.ccn,
                 aliases=list(facility.aliases),
+                address=getattr(facility, 'address', None),
             )
             self._register(record)
 
@@ -164,6 +167,7 @@ class FacilityRegistry:
         ccn: str | None = None,
         aliases: list[str] | None = None,
         flags: list[str] | None = None,
+        address: str | None = None,
     ) -> FacilityRecord:
         """Add a new facility to the registry at runtime.
 
@@ -175,6 +179,7 @@ class FacilityRegistry:
             ccn: Optional CCN identifier.
             aliases: Optional list of alias strings.
             flags: Optional list of flags (e.g., FACILITY_NEW_UNREVIEWED).
+            address: Optional facility address string.
 
         Returns:
             The created FacilityRecord.
@@ -187,6 +192,7 @@ class FacilityRegistry:
             ccn=ccn,
             aliases=aliases or [],
             flags=flags or [],
+            address=address,
         )
         self._register(record)
         return record
@@ -236,5 +242,42 @@ class FacilityRegistry:
             db_rec["aliases"] = json.dumps(rec["aliases"])
             db_rec["flags"] = json.dumps(rec["flags"])
             db_records.append(db_rec)
+        count: int = adapter.write_records("asre_facility_registry", db_records)
+        return count
+
+    def upsert(self, adapter: Any) -> int:
+        """Upsert registry to database — update existing, insert new.
+
+        Unlike persist(), this does NOT delete facilities that aren't in the
+        current in-memory registry.  They may be from prior runs or manual
+        additions.
+
+        Uses DELETE+INSERT per canonical_id (simple upsert pattern).
+
+        Args:
+            adapter: IngestAdapter instance for database access.
+
+        Returns:
+            Number of records written (inserted + updated).
+        """
+        records = self.to_records()
+        if not records:
+            return 0
+
+        # Serialize list fields to JSON strings for database storage
+        db_records: list[dict[str, Any]] = []
+        for rec in records:
+            db_rec = dict(rec)
+            db_rec["aliases"] = json.dumps(rec["aliases"])
+            db_rec["flags"] = json.dumps(rec["flags"])
+            db_records.append(db_rec)
+
+        # Delete existing rows for IDs we're about to write, then insert
+        for db_rec in db_records:
+            cid = db_rec["canonical_id"].replace("'", "''")
+            adapter.execute_ddl(
+                f"DELETE FROM asre_facility_registry WHERE canonical_id = '{cid}'"
+            )
+
         count: int = adapter.write_records("asre_facility_registry", db_records)
         return count

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from asre.ingest.stage import IngestStage
+from asre.config.source_schema import SourceConfig
 from asre.models.batch import EventBatch
 from asre.pipeline.runner import PipelineContext, PipelineStage
 
@@ -129,6 +130,31 @@ class TestIngestStageRun:
 
         assert mock_adapter.read_source.call_count == 2
 
+    def test_accepts_source_config_models(
+        self,
+        mock_adapter: MagicMock,
+        adt_source_config: dict[str, Any],
+    ) -> None:
+        """IngestStage should accept SourceConfig objects from load_config."""
+        source_model = SourceConfig(**adt_source_config)
+        context = PipelineContext(
+            run_id="run_model",
+            config={
+                "sources": [source_model],
+                "schedule": {
+                    "mode": "full",
+                    "lookback_buffer": {"default": "24h"},
+                },
+                "adapter": mock_adapter,
+            },
+            mode="full",
+        )
+
+        stage = IngestStage()
+        stage.run(EventBatch(batch_id="b1", events=[]), context)
+
+        mock_adapter.read_source.assert_called_once()
+
     def test_returns_raw_records_in_result(
         self,
         mock_adapter: MagicMock,
@@ -213,6 +239,32 @@ class TestIngestStageRun:
         assert len(stage.raw_records) == 2
         assert stage.raw_records[0]["patient_id"] == "P001"
         assert stage.raw_records[1]["patient_id"] == "P003"
+
+    def test_ingest_orders_by_incremental_key_and_source_record_id(
+        self,
+        mock_adapter: MagicMock,
+        adt_source_config: dict[str, Any],
+    ) -> None:
+        """IngestStage should add ORDER BY for deterministic reads."""
+        context = PipelineContext(
+            run_id="run_001",
+            config={
+                "sources": [adt_source_config],
+                "schedule": {
+                    "mode": "full",
+                    "lookback_buffer": {"default": "24h"},
+                },
+                "adapter": mock_adapter,
+            },
+            mode="full",
+        )
+        mock_adapter.read_source.return_value = []
+
+        stage = IngestStage()
+        stage.run(EventBatch(batch_id="b1", events=[]), context)
+
+        query = mock_adapter.read_source.call_args[0][1]
+        assert "ORDER BY message_ts, msg_control_id" in query
 
     def test_returns_event_batch_passthrough(
         self,

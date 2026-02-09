@@ -85,14 +85,14 @@ class HealthCheckServer(HTTPServer):
     Args:
         port: TCP port to listen on. Use 0 for a random available port.
         state: Shared PipelineHealthState instance.
-        bind_address: Address to bind to (default "0.0.0.0").
+        bind_address: Address to bind to (default "127.0.0.1").
     """
 
     def __init__(
         self,
         port: int = 8080,
         state: PipelineHealthState | None = None,
-        bind_address: str = "0.0.0.0",
+        bind_address: str = "127.0.0.1",
     ) -> None:
         self.health_state = state or PipelineHealthState()
         super().__init__((bind_address, port), _HealthHandler)
@@ -100,3 +100,16 @@ class HealthCheckServer(HTTPServer):
     def get_port(self) -> int:
         """Return the port the server is listening on."""
         return self.server_address[1]
+
+
+def start_health_check_server(
+    *,
+    state: PipelineHealthState | None = None,
+    port: int = 8080,
+    bind_address: str = "127.0.0.1",
+) -> tuple[HealthCheckServer, threading.Thread]:
+    """Start a health check server in a background thread."""
+    server = HealthCheckServer(port=port, state=state, bind_address=bind_address)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread

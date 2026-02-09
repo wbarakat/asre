@@ -61,6 +61,25 @@ def _get_test_config(column: dict[str, Any], test_name: str) -> dict[str, Any] |
     return None
 
 
+def _accepted_values(config: dict[str, Any]) -> list[str]:
+    """Return accepted_values list across dbt 1.x config shapes."""
+    arguments = config.get("arguments")
+    if isinstance(arguments, dict) and isinstance(arguments.get("values"), list):
+        return arguments["values"]
+    values = config.get("values")
+    if isinstance(values, list):
+        return values
+    return []
+
+
+def _relationship_args(config: dict[str, Any]) -> dict[str, Any]:
+    """Return relationships args across dbt 1.x config shapes."""
+    arguments = config.get("arguments")
+    if isinstance(arguments, dict):
+        return arguments
+    return config
+
+
 class TestSchemaFileExists:
     """Verify schema.yml exists and is valid YAML."""
 
@@ -127,7 +146,7 @@ class TestAdmissionEventsUnifiedTests:
         )
         config = _get_test_config(col, "accepted_values")
         assert config is not None
-        assert set(config["values"]) == {"open", "closed", "cancelled"}
+        assert set(_accepted_values(config)) == {"open", "closed", "cancelled"}
 
     def test_encounter_type_accepted_values(self) -> None:
         schema = _load_schema()
@@ -138,7 +157,7 @@ class TestAdmissionEventsUnifiedTests:
         )
         config = _get_test_config(col, "accepted_values")
         assert config is not None
-        assert set(config["values"]) == {
+        assert set(_accepted_values(config)) == {
             "inpatient", "observation", "ed_only", "outpatient"
         }
 
@@ -167,5 +186,6 @@ class TestEncountersDetailTests:
         )
         config = _get_test_config(col, "relationships")
         assert config is not None
-        assert config["to"] == "ref('admission_events_unified')"
-        assert config["field"] == "encounter_id"
+        rel = _relationship_args(config)
+        assert rel["to"] == "ref('admission_events_unified')"
+        assert rel["field"] == "encounter_id"

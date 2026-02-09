@@ -12,6 +12,8 @@ from typing import Any
 
 from asre.config.source_schema import FieldMappings, PairedEvents
 from asre.models.canonical_event import CanonicalEvent
+from asre.canonicalize.timestamp_parser import parse_event_ts
+from asre.canonicalize.event_id import generate_event_id
 
 
 class PairedEventEmitter:
@@ -65,7 +67,11 @@ class PairedEventEmitter:
 
         # Admit event
         admit_event = CanonicalEvent(
-            event_id=str(uuid.uuid4()),
+            event_id=generate_event_id(
+                source_system=source_system,
+                source_record_id=source_record_id,
+                event_type=pe.admit.event_type,
+            ),
             patient_key=patient_key,
             event_type=pe.admit.event_type,
             event_ts=self._parse_event_ts(record[pe.admit.event_ts]),
@@ -84,7 +90,11 @@ class PairedEventEmitter:
 
         # Discharge event
         discharge_event = CanonicalEvent(
-            event_id=str(uuid.uuid4()),
+            event_id=generate_event_id(
+                source_system=source_system,
+                source_record_id=source_record_id,
+                event_type=pe.discharge.event_type,
+            ),
             patient_key=patient_key,
             event_type=pe.discharge.event_type,
             event_ts=self._parse_event_ts(record[pe.discharge.event_ts]),
@@ -106,9 +116,7 @@ class PairedEventEmitter:
     @staticmethod
     def _parse_event_ts(value: Any) -> datetime:
         """Parse event_ts from string or pass through datetime."""
-        if isinstance(value, datetime):
-            return value
-        return datetime.fromisoformat(str(value))
+        return parse_event_ts(value)
 
     @staticmethod
     def _get_optional(record: dict[str, Any], mapping_field: str | None) -> str | None:

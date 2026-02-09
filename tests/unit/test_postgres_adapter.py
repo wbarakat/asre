@@ -47,6 +47,7 @@ class TestPostgresAdapterConnection:
             "user": "testuser",
             "password": "testpass",
             "schema": "public",
+            "require_utf8": False,
         }
         return PostgresAdapter(config)
 
@@ -68,6 +69,53 @@ class TestPostgresAdapterConnection:
         assert "postgresql" in url
         assert "testuser" in url
         assert "testdb" in url
+
+    @patch("asre.ingest.postgres.create_engine")
+    def test_connect_sets_client_encoding_utf8(
+        self, mock_create_engine: MagicMock
+    ) -> None:
+        mock_engine = MagicMock()
+        mock_connection = MagicMock()
+        mock_dbapi = MagicMock()
+        mock_connection.connection = mock_dbapi
+        mock_engine.connect.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine
+
+        adapter = self._make_adapter()
+        adapter.connect()
+
+        mock_dbapi.set_client_encoding.assert_called_once_with("UTF8")
+
+    @patch("asre.ingest.postgres.create_engine")
+    def test_connect_requires_utf8_when_configured(
+        self, mock_create_engine: MagicMock
+    ) -> None:
+        from asre.ingest.postgres import PostgresAdapter
+
+        mock_engine = MagicMock()
+        mock_connection = MagicMock()
+        mock_dbapi = MagicMock()
+        mock_connection.connection = mock_dbapi
+        server_result = MagicMock()
+        server_result.scalar.return_value = "SQL_ASCII"
+        client_result = MagicMock()
+        client_result.scalar.return_value = "UTF8"
+        mock_connection.execute.side_effect = [server_result, client_result]
+        mock_engine.connect.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine
+
+        config: dict[str, Any] = {
+            "host": "localhost",
+            "port": "5432",
+            "database": "testdb",
+            "user": "testuser",
+            "password": "testpass",
+            "schema": "public",
+            "require_utf8": True,
+        }
+        adapter = PostgresAdapter(config)
+        with pytest.raises(ConnectionError, match="UTF-8"):
+            adapter.connect()
 
     @patch("asre.ingest.postgres.create_engine")
     def test_connect_error_raises_with_clear_message(
@@ -164,6 +212,28 @@ class TestPostgresAdapterReadSource:
             params={"id": 1},
         )
         assert mock_conn.execute.called
+
+    def test_read_source_rolls_back_on_error(self) -> None:
+        """Ensure failed reads rollback the connection to clear error state."""
+        from asre.ingest.postgres import PostgresAdapter
+
+        config: dict[str, Any] = {
+            "host": "localhost",
+            "port": "5432",
+            "database": "testdb",
+            "user": "testuser",
+            "password": "testpass",
+            "schema": "public",
+        }
+        adapter = PostgresAdapter(config)
+        mock_connection = MagicMock()
+        mock_connection.execute.side_effect = RuntimeError("boom")
+        adapter._connection = mock_connection  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError):
+            adapter.read_source("test_source", "SELECT * FROM missing")
+
+        mock_connection.rollback.assert_called_once()
 
 
 class TestPostgresAdapterExecuteDDL:

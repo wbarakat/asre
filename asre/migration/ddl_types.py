@@ -96,3 +96,15 @@ class DDLTypeMapper:
         if self._warehouse_type == "bigquery":
             return ""
         return f"PRIMARY KEY ({', '.join(columns)})"
+
+
+def add_column_if_missing(adapter: object, table: str, column: str, col_type: str) -> None:
+    """Attempt to add a column to a table, ignoring errors if it already exists.
+
+    This is used by _ensure_table() methods as a safety net to converge
+    existing installs to the latest schema, even if migrations haven't run.
+    """
+    try:
+        adapter.execute_ddl(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")  # type: ignore[union-attr]
+    except Exception:
+        pass  # Column already exists

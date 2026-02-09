@@ -16,6 +16,7 @@ from asre.models.batch import EventBatch
 from asre.observability.metrics import StageMetrics
 from asre.pipeline.runner import PipelineContext, PipelineStage
 from asre.quality.alerter import Alerter
+from asre.quality.errors import QualityGateError
 from asre.quality.metrics import QualityMetricComputer
 
 logger = logging.getLogger(__name__)
@@ -107,9 +108,23 @@ class QualityCheckStage(PipelineStage):
                 self._ensure_table(adapter)
                 adapter.write_records(QUALITY_METRICS_TABLE, records)
 
-            # 5. Update watermark
+            # 5. Enforce quality gate
+            block_on = alerting_cfg.get("block_on_statuses")
+            if block_on is None:
+                block_on = ["fail"]
+            blocked = [
+                name
+                for name, status in self.metric_statuses.items()
+                if status in block_on
+            ]
+            if blocked:
+                raise QualityGateError(
+                    f"Quality gate failed for metrics: {', '.join(sorted(blocked))}"
+                )
+
+            # 6. Update watermark
             if adapter is not None:
-                now = datetime.now(tz=timezone.utc).isoformat()
+                now = datetime.now(tz=timezone.utc)
                 adapter.set_watermark("quality_check", now)
 
             self.metrics.records_out = len(self.computed_metrics)
@@ -143,16 +158,30 @@ class QualityCheckStage(PipelineStage):
     @staticmethod
     def _ensure_table(adapter: Any) -> None:
         """Create asre_quality_metrics table if it does not exist."""
+        from asre.migration.ddl_types import DDLTypeMapper, add_column_if_missing
+
+        wt = getattr(adapter, "warehouse_type", "postgres")
+        m = DDLTypeMapper(wt)
+        t = m.text()
+        r = m.real()
+        pk = m.primary_key("metric_id")
+
         ddl = (
             f"CREATE TABLE IF NOT EXISTS {QUALITY_METRICS_TABLE} ("
-            "run_id TEXT NOT NULL, "
-            "metric_name TEXT NOT NULL, "
-            "metric_value REAL, "
-            "warn_threshold REAL, "
-            "fail_threshold REAL, "
-            "status TEXT, "
-            "computed_at TEXT, "
-            "PRIMARY KEY (run_id, metric_name)"
+            f"{pk}, "
+            f"run_id {t} NOT NULL, "
+            f"metric_name {t} NOT NULL, "
+            f"metric_value {r}, "
+            f"warn_threshold {r}, "
+            f"fail_threshold {r}, "
+            f"status {t}, "
+            f"run_ts {t}, "
+            f"detail {t}"
             ")"
         )
         adapter.execute_ddl(ddl)
+
+        # Ensure columns added by later migrations exist on older installs
+        add_column_if_missing(adapter, QUALITY_METRICS_TABLE, "metric_id", t)
+        add_column_if_missing(adapter, QUALITY_METRICS_TABLE, "run_ts", t)
+        add_column_if_missing(adapter, QUALITY_METRICS_TABLE, "detail", t)

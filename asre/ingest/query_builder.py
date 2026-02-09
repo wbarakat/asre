@@ -37,6 +37,7 @@ class IngestQueryBuilder:
         exclude_filter: str | None = None,
         watermark: datetime | None = None,
         lookback_buffer_hours: int = 24,
+        order_by: list[str] | None = None,
     ) -> None:
         self._table = table
         self._incremental_key = incremental_key
@@ -44,6 +45,7 @@ class IngestQueryBuilder:
         self._exclude_filter = exclude_filter
         self._watermark = watermark
         self._lookback_buffer_hours = lookback_buffer_hours
+        self._order_by = order_by or []
 
     def _should_apply_watermark(self) -> bool:
         """Check if watermark filtering should be applied."""
@@ -64,12 +66,17 @@ class IngestQueryBuilder:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
+        if self._order_by:
+            order_clause = ", ".join(self._order_by)
+            query += f" ORDER BY {order_clause}"
+
         return query
 
     def build_params(self) -> dict[str, Any]:
         """Build query parameters."""
         if self._should_apply_watermark():
-            assert self._watermark is not None
+            if self._watermark is None:
+                raise RuntimeError("Watermark must be set for incremental mode")
             adjusted = self._watermark - timedelta(hours=self._lookback_buffer_hours)
             return {"watermark": adjusted}
         return {}

@@ -21,7 +21,7 @@ from asre.reconcile.stage import ReconciledEncounter
 
 logger = logging.getLogger(__name__)
 
-ASRE_VERSION = "0.1.0"
+ASRE_VERSION = "1.0.0"
 
 TABLE_NAME = "admission_events_unified"
 DETAIL_TABLE_NAME = "asre_encounters_detail"
@@ -313,21 +313,27 @@ class MaterializeStage(PipelineStage):
             # Load existing encounter_ids for upsert logic
             existing_ids = self._load_existing_ids(adapter)
 
-            insert_records: list[dict[str, Any]] = []
+            insert_map: dict[str, dict[str, Any]] = {}
             update_records: list[dict[str, Any]] = []
             detail_records: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
 
             for enc in encounters:
                 # Assign roles to events before materialization
                 assign_event_roles(enc)
 
                 record = encounter_to_record(enc, now, context.run_id)
-                if record["encounter_id"] in existing_ids:
+                eid = record["encounter_id"]
+                if eid in existing_ids:
                     # Preserve original created_at for updates
-                    record["created_at"] = existing_ids[record["encounter_id"]]
+                    record["created_at"] = existing_ids[eid]
                     update_records.append(record)
+                elif eid in seen_ids:
+                    # Duplicate encounter_id within batch — keep latest
+                    insert_map[eid] = record
                 else:
-                    insert_records.append(record)
+                    seen_ids.add(eid)
+                    insert_map[eid] = record
 
                 # Build detail rows for each event
                 enc_id = enc.encounter_id or ""
@@ -336,7 +342,8 @@ class MaterializeStage(PipelineStage):
                         event_to_detail_record(event, enc_id)
                     )
 
-            # Write inserts
+            # Write inserts (deduplicated by encounter_id)
+            insert_records = list(insert_map.values())
             if insert_records:
                 count: int = adapter.write_records(TABLE_NAME, insert_records)
                 self.encounters_inserted = count
@@ -377,6 +384,10 @@ class MaterializeStage(PipelineStage):
 
             # Write detail rows
             if detail_records:
+                self._delete_detail_rows(
+                    adapter,
+                    {rec["encounter_id"] for rec in detail_records},
+                )
                 detail_count: int = adapter.write_records(
                     DETAIL_TABLE_NAME, detail_records
                 )
@@ -458,16 +469,30 @@ class MaterializeStage(PipelineStage):
                 row["encounter_id"]: row["created_at"] for row in rows
             }
         except Exception:
-            # Table might not have data yet
+            logger.debug("Could not load existing encounter IDs (table may not exist yet)")
             return {}
 
     def _delete_by_id(self, adapter: Any, encounter_id: str) -> None:
         """Delete a single encounter by ID for upsert."""
-        from sqlalchemy import text  # noqa: PLC0415
+        adapter.execute_ddl(
+            f"DELETE FROM {TABLE_NAME} WHERE encounter_id = {_sql_literal(encounter_id)}"
+        )
 
-        if hasattr(adapter, "_connection") and adapter._connection is not None:
-            adapter._connection.execute(
-                text(f"DELETE FROM {TABLE_NAME} WHERE encounter_id = :eid"),
-                {"eid": encounter_id},
+    def _delete_detail_rows(self, adapter: Any, encounter_ids: set[str]) -> None:
+        """Delete detail rows for a set of encounter IDs."""
+        if not encounter_ids:
+            return
+
+        ids = list(encounter_ids)
+        chunk_size = 1000
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            ids_sql = ", ".join(_sql_literal(val) for val in chunk)
+            adapter.execute_ddl(
+                f"DELETE FROM {DETAIL_TABLE_NAME} WHERE encounter_id IN ({ids_sql})"
             )
-            adapter._connection.commit()
+
+
+def _sql_literal(value: str) -> str:
+    escaped = value.replace("'", "''")
+    return f"'{escaped}'"

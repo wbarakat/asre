@@ -21,18 +21,21 @@ models:
         description: "Encounter status"
         tests:
           - accepted_values:
-              values: ['open', 'closed', 'cancelled']
+              arguments:
+                values: ['open', 'closed', 'cancelled']
       - name: encounter_type
         description: "Encounter type classification"
         tests:
           - accepted_values:
-              values: ['inpatient', 'observation', 'ed_only', 'outpatient']
+              arguments:
+                values: ['inpatient', 'observation', 'ed_only', 'outpatient']
       - name: episode_id
         description: "Reference to parent episode"
         tests:
           - relationships:
-              to: ref('asre_episodes')
-              field: episode_id
+              arguments:
+                to: ref('asre_episodes')
+                field: episode_id
 
   - name: asre_encounters_detail
     description: "Event-level detail with role classifications"
@@ -42,8 +45,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('admission_events_unified')
-              field: encounter_id
+              arguments:
+                to: ref('admission_events_unified')
+                field: encounter_id
 
   - name: asre_audit_log
     description: "Pipeline modification audit trail"
@@ -99,4 +103,20 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['active', 'closed', 'reopened']
+              arguments:
+                values: ['active', 'closed', 'reopened']
+
+  - name: asre_facility_registry
+    description: "Canonical facility master with aliases, NPI, CCN, facility type"
+    columns:
+      - name: canonical_id
+        description: "Unique canonical facility identifier"
+        tests:
+          - unique
+          - not_null
+      - name: canonical_name
+        description: "Canonical facility name"
+        tests:
+          - not_null
+      - name: facility_type
+        description: "Facility type classification"

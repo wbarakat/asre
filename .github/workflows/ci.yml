@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -46,20 +47,35 @@ jobs:
         run: |
           python -m mypy asre/ --strict
 
-      - name: Run unit tests
+      - name: Security scan (dependency audit)
         run: |
-          python -m pytest tests/unit/ -v --tb=short
+          pip install pip-audit
+          pip-audit --strict
+
+      - name: Security scan (SAST)
+        run: |
+          pip install bandit
+          bandit -r asre/ -c pyproject.toml
+
+      - name: Run unit tests with coverage
+        run: |
+          python -m pytest tests/unit/ -v --tb=short --cov=asre --cov-report=term-missing --cov-fail-under=80
 
       - name: Run integration tests
         env:
-          TEST_DATABASE_URL: postgresql://asre_test:asre_test@localhost:5432/asre_test
+          ASRE_TEST_PG_HOST: localhost
+          ASRE_TEST_PG_PORT: 5432
+          ASRE_TEST_PG_DATABASE: asre_test
+          ASRE_TEST_PG_USER: asre_test
+          ASRE_TEST_PG_PASSWORD: asre_test
+          ASRE_TEST_PG_SCHEMA: public
         run: |
-          python -m pytest tests/integration/ -v --tb=short -m integration || true
+          python -m pytest tests/integration/ -v --tb=short
 
       - name: Check snapshot diffs
         run: |
-          python -m pytest tests/unit/ --snapshot-update --snapshot-warn-unused || true
-          git diff --exit-code tests/ || echo "::warning::Snapshot changes detected - review before merging"
+          python -m pytest tests/unit/ --snapshot-warn-unused
+          git diff --exit-code tests/
 
   dbt:
     runs-on: ubuntu-latest
@@ -103,7 +119,36 @@ jobs:
           ASRE_DB_PASSWORD: asre_test
           ASRE_DB_NAME: asre_test
         run: |
-          dbt compile --target postgres || true
+          dbt compile --target dev
+
+      - name: Bootstrap ASRE schema objects
+        env:
+          ASRE_DB_HOST: localhost
+          ASRE_DB_PORT: 5432
+          ASRE_DB_USER: asre_test
+          ASRE_DB_PASSWORD: asre_test
+          ASRE_DB_NAME: asre_test
+        run: |
+          python - <<'PY'
+          import os
+          from asre.ingest.postgres import PostgresAdapter
+          from asre.migration.migrator import Migrator
+
+          cfg = {
+              "host": os.environ["ASRE_DB_HOST"],
+              "port": os.environ["ASRE_DB_PORT"],
+              "database": os.environ["ASRE_DB_NAME"],
+              "user": os.environ["ASRE_DB_USER"],
+              "password": os.environ["ASRE_DB_PASSWORD"],
+              "schema": "public",
+          }
+          adapter = PostgresAdapter(cfg)
+          adapter.connect()
+          try:
+              Migrator(adapter).run()
+          finally:
+              adapter.disconnect()
+          PY
 
       - name: dbt test
         working-directory: dbt_project
@@ -115,11 +160,13 @@ jobs:
           ASRE_DB_PASSWORD: asre_test
           ASRE_DB_NAME: asre_test
         run: |
-          dbt test --target postgres || true
+          dbt test --target dev
 
   build:
     runs-on: ubuntu-latest
     needs: [test]
+    permissions:
+      packages: write
 
     steps:
       - uses: actions/checkout@v4
@@ -127,11 +174,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Embed license public key
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p asre/license
+          echo "${{ secrets.ASRE_LICENSE_PUBLIC_KEY }}" > asre/license/public_key.pem
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
-          tags: asre-engine:${{ github.sha }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: |
+            ghcr.io/wbarakat/asre-engine:${{ github.ref_name }}
+            ghcr.io/wbarakat/asre-engine:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

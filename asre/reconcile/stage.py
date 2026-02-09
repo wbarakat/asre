@@ -128,6 +128,7 @@ class ReconcileStage(PipelineStage):
         all_flags.extend(reconciler.flag_orphan_discharge(encounter))
         all_flags.extend(reconciler.flag_claims_only(encounter))
         all_flags.extend(reconciler.flag_adt_only(encounter, now))
+        all_flags.extend(self._flag_facility_unresolved(encounter))
 
         result.confidence_flags = all_flags
 
@@ -136,6 +137,17 @@ class ReconcileStage(PipelineStage):
             self.flags_generated[flag] = self.flags_generated.get(flag, 0) + 1
 
         return result
+
+    @staticmethod
+    def _flag_facility_unresolved(encounter: StitchedEncounter) -> list[str]:
+        """Flag facility unresolved when missing or only runtime-created."""
+        if encounter.facility_canonical_id is None:
+            return ["FACILITY_UNRESOLVED"]
+        for event in encounter.events:
+            match_type = getattr(event, "facility_match_type", None)
+            if match_type == "new":
+                return ["FACILITY_UNRESOLVED"]
+        return []
 
     def _build_reconciler(self, config: dict[str, Any]) -> Reconciler:
         """Build a Reconciler from pipeline config."""

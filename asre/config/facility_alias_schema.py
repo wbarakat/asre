@@ -14,6 +14,7 @@ class FacilityAlias(BaseModel):
     ccn: str | None = None
     facility_type: str | None = None
     aliases: list[str] = []
+    address: str | None = None
 
 
 class FacilityAliasConfig(BaseModel):

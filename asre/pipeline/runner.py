@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from asre.models.batch import EventBatch
@@ -75,6 +76,17 @@ _STAGE_ORDER: list[str] = [
     "episode_stitch",
     "episode_materialize",
     "episode_quality",
+]
+
+# Tables to clear before a full refresh run
+_FULL_REFRESH_TABLES: list[str] = [
+    "admission_events_unified",
+    "asre_encounters_detail",
+    "asre_episodes",
+    "asre_quality_metrics",
+    "asre_run_metrics",
+    "asre_audit_log",
+    "asre_canonical_events",
 ]
 
 
@@ -167,34 +179,86 @@ class PipelineRunner:
 
         return stages
 
+    # Default bundled SQLite registry path (inside package)
+    _DEFAULT_SQLITE_REGISTRY = (
+        Path(__file__).parent.parent / "data" / "facility_registry.db"
+    )
+
     def _build_facility_stage(self) -> PipelineStage:
         """Build FacilityNormalizationStage from config."""
         from asre.config.facility_alias_schema import FacilityAliasConfig
         from asre.facility.normalizer import FacilityNormalizer
         from asre.facility.registry import FacilityRegistry
         from asre.facility.stage import FacilityNormalizationStage
+        from asre.facility.registry_loader import load_facility_registry_csv
+        from pathlib import Path
 
-        normalizer = FacilityNormalizer()
         alias_config = self._config.get("facility_aliases")
         if alias_config is None or not isinstance(alias_config, FacilityAliasConfig):
             alias_config = FacilityAliasConfig(facilities=[])
 
         facility_normalization_cfg = self._config.get("facility_normalization", {})
         fuzzy_threshold: float = 0.85
+        abbreviations: dict[str, str] | None = None
+        registry_path: str | None = None
+        sqlite_registry_path: str | None = None
+        use_npi_registry = True
+        use_ccn_registry = True
         if hasattr(facility_normalization_cfg, "fuzzy_threshold"):
             fuzzy_threshold = facility_normalization_cfg.fuzzy_threshold
+            abbreviations = facility_normalization_cfg.abbreviations
+            registry_path = getattr(facility_normalization_cfg, "registry_path", None)
+            sqlite_registry_path = getattr(facility_normalization_cfg, "sqlite_registry_path", None)
+            use_npi_registry = getattr(facility_normalization_cfg, "use_npi_registry", True)
+            use_ccn_registry = getattr(facility_normalization_cfg, "use_ccn_registry", True)
         elif isinstance(facility_normalization_cfg, dict):
             fuzzy_threshold = facility_normalization_cfg.get(
                 "fuzzy_threshold", 0.85
             )
+            abbreviations = facility_normalization_cfg.get("abbreviations")
+            registry_path = facility_normalization_cfg.get("registry_path")
+            sqlite_registry_path = facility_normalization_cfg.get("sqlite_registry_path")
+            use_npi_registry = facility_normalization_cfg.get("use_npi_registry", True)
+            use_ccn_registry = facility_normalization_cfg.get("use_ccn_registry", True)
+
+        normalizer = FacilityNormalizer(abbreviations=abbreviations)
+
+        # Load NPI/CCN registry entries if provided
+        registry_aliases = None
+        if registry_path:
+            try:
+                registry_aliases = load_facility_registry_csv(
+                    Path(registry_path),
+                    use_npi_registry=use_npi_registry,
+                    use_ccn_registry=use_ccn_registry,
+                )
+            except FileNotFoundError:
+                logger.warning("Facility registry path not found: %s", registry_path)
+
+        if registry_aliases is not None and registry_aliases.facilities:
+            combined = list(registry_aliases.facilities)
+            combined.extend(alias_config.facilities)
+            alias_config = FacilityAliasConfig(facilities=combined)
 
         registry = FacilityRegistry(alias_config, normalizer)
+
+        # Load SQLite registry for NPI/CCN fallback lookup
+        sqlite_lookup = None
+        if sqlite_registry_path is None:
+            # Auto-detect bundled default
+            if self._DEFAULT_SQLITE_REGISTRY.exists():
+                sqlite_registry_path = str(self._DEFAULT_SQLITE_REGISTRY)
+        if sqlite_registry_path and Path(sqlite_registry_path).exists():
+            from asre.facility.sqlite_registry import SQLiteRegistryLookup
+            sqlite_lookup = SQLiteRegistryLookup(sqlite_registry_path)
+            logger.info("Loaded SQLite facility registry: %s", sqlite_registry_path)
 
         return FacilityNormalizationStage(
             normalizer=normalizer,
             alias_config=alias_config,
             registry=registry,
             fuzzy_threshold=fuzzy_threshold,
+            sqlite_lookup=sqlite_lookup,
         )
 
     def _get_checkpoint_manager(self) -> Any:
@@ -204,7 +268,18 @@ class PipelineRunner:
             return None
         from asre.pipeline.checkpoint import CheckpointManager
 
-        return CheckpointManager(adapter)
+        mgr = CheckpointManager(adapter)
+        mgr.ensure_table()
+        return mgr
+
+    def _get_health_state(self) -> Any | None:
+        """Return configured health state tracker if present."""
+        state = self._config.get("health_state")
+        if state is None:
+            return None
+        if not hasattr(state, "mark_failed") or not hasattr(state, "mark_ok"):
+            return None
+        return state
 
     def run(self, resume_run_id: str | None = None) -> dict[str, Any]:
         """Execute the full pipeline.
@@ -216,112 +291,176 @@ class PipelineRunner:
         Returns:
             Summary dict with run_id, mode, and stage metrics.
         """
-        checkpoint_mgr = self._get_checkpoint_manager()
-        skip_through_index = -1
+        health_state = self._get_health_state()
+        if health_state is not None:
+            health_state.mark_ok()
 
-        if resume_run_id is not None:
-            if checkpoint_mgr is None:
-                raise ValueError(
-                    f"Cannot resume run '{resume_run_id}': no adapter configured"
-                )
-            cp = checkpoint_mgr.load_checkpoint(resume_run_id)
-            if cp is None:
-                raise ValueError(
-                    f"Checkpoint for run '{resume_run_id}' not found"
-                )
-            if cp.get("status") == "completed":
-                raise ValueError(
-                    f"Run '{resume_run_id}' already completed"
-                )
-            skip_through_index = cp["stage_index"]
-            self.run_id = resume_run_id
+        try:
+            checkpoint_mgr = self._get_checkpoint_manager()
+            skip_through_index = -1
 
-        batch = EventBatch(batch_id=self.run_id, events=[])
-        context = PipelineContext(
-            run_id=self.run_id,
-            config=dict(self._config),
-            mode=self.mode,
-        )
-
-        # Set up audit logger and run metrics writer if adapter is available
-        adapter = self._config.get("adapter")
-        metrics_writer = None
-        if adapter is not None:
-            from asre.pipeline.audit import AuditLogger
-
-            audit_logger = AuditLogger(adapter=adapter, run_id=self.run_id)
-            audit_logger.ensure_table()
-            context.config["audit_logger"] = audit_logger
-
-            from asre.observability.run_metrics_writer import RunMetricsWriter
-
-            metrics_writer = RunMetricsWriter(adapter)
-            metrics_writer.ensure_table()
-
-        self.stage_metrics = []
-
-        stage_names = list(self._stages.keys())
-        for idx, stage_name in enumerate(stage_names):
-            # Skip stages that were already completed in a prior run
-            if idx <= skip_through_index:
-                logger.info(
-                    "Skipping stage: %s (already completed, run_id=%s)",
-                    stage_name,
-                    self.run_id,
-                )
-                continue
-
-            stage = self._stages[stage_name]
-
-            logger.info("Starting stage: %s (run_id=%s)", stage_name, self.run_id)
-            try:
-                batch = stage.run(batch, context)
-            except Exception:
-                if checkpoint_mgr is not None:
-                    # Record the failure — last_completed_stage is the
-                    # previous stage (idx-1), but we store the failing
-                    # stage name so resume knows where to retry.
-                    prev_stage = stage_names[idx - 1] if idx > 0 else stage_name
-                    checkpoint_mgr.mark_failed(
-                        run_id=self.run_id,
-                        stage_name=prev_stage,
-                        stage_index=idx - 1 if idx > 0 else 0,
-                        error=f"Stage {stage_name} failed",
+            if resume_run_id is not None:
+                if checkpoint_mgr is None:
+                    raise ValueError(
+                        f"Cannot resume run '{resume_run_id}': no adapter configured"
                     )
-                raise
-            logger.info("Completed stage: %s", stage_name)
+                cp = checkpoint_mgr.load_checkpoint(resume_run_id)
+                if cp is None:
+                    raise ValueError(
+                        f"Checkpoint for run '{resume_run_id}' not found"
+                    )
+                if cp.get("status") == "completed":
+                    raise ValueError(
+                        f"Run '{resume_run_id}' already completed"
+                    )
+                self.run_id = resume_run_id
+                stage_index = cp.get("stage_index", -1)
+                if isinstance(stage_index, str):
+                    stage_index = int(stage_index)
+                if stage_index >= 7:
+                    skip_through_index = stage_index
+                    logger.info(
+                        "Resuming run %s: skipping through stage index %d, "
+                        "rehydrating from materialized data",
+                        resume_run_id,
+                        stage_index,
+                    )
+                else:
+                    skip_through_index = -1
+                    logger.warning(
+                        "Resuming run %s by replaying all stages "
+                        "(checkpoint at stage index %d < 7)",
+                        resume_run_id,
+                        stage_index,
+                    )
 
-            # Data handoff between stages
-            self._handoff(stage_name, stage, context)
+            batch = EventBatch(batch_id=self.run_id, events=[])
+            context = PipelineContext(
+                run_id=self.run_id,
+                config=dict(self._config),
+                mode=self.mode,
+            )
 
-            # Collect metrics
-            if hasattr(stage, "metrics") and hasattr(stage.metrics, "to_dict"):
-                self.stage_metrics.append(stage.metrics.to_dict())
+            # Set up audit logger and run metrics writer if adapter is available
+            adapter = self._config.get("adapter")
+            metrics_writer = None
+            if adapter is not None:
+                from asre.pipeline.audit import AuditLogger
 
-            # Check error tolerance after each stage
-            self._check_error_tolerance()
+                audit_logger = AuditLogger(adapter=adapter, run_id=self.run_id)
+                audit_logger.ensure_table()
+                context.config["audit_logger"] = audit_logger
 
-            # Save checkpoint after successful stage
+                from asre.observability.run_metrics_writer import RunMetricsWriter
+
+                metrics_writer = RunMetricsWriter(adapter)
+                metrics_writer.ensure_table()
+
+            self.stage_metrics = []
+
+            stage_names = list(self._stages.keys())
+
+            # Full refresh cleanup before processing stages
+            if (
+                self.mode == "full"
+                and adapter is not None
+                and not context.config.get("dry_run", False)
+            ):
+                self._full_refresh_cleanup(adapter)
+
+            # Rehydrate data if skipping post-materialize stages
+            if skip_through_index >= 7:
+                self._rehydrate_post_materialize(context)
+
+            for idx, stage_name in enumerate(stage_names):
+                # Skip stages that were already completed in a prior run
+                if idx <= skip_through_index:
+                    logger.info(
+                        "Skipping stage: %s (already completed, run_id=%s)",
+                        stage_name,
+                        self.run_id,
+                    )
+                    continue
+
+                stage = self._stages[stage_name]
+
+                logger.info("Starting stage: %s (run_id=%s)", stage_name, self.run_id)
+                try:
+                    batch = stage.run(batch, context)
+                except Exception as exc:
+                    if health_state is not None:
+                        health_state.mark_failed(
+                            f"Stage {stage_name} failed: {exc}"
+                        )
+                    if checkpoint_mgr is not None:
+                        # Rollback any aborted transaction so checkpoint write succeeds
+                        adapter = self._config.get("adapter")
+                        if adapter is not None and hasattr(adapter, "_connection"):
+                            try:
+                                adapter._connection.rollback()
+                            except Exception:
+                                pass
+                        # Record the failure -- last_completed_stage is the
+                        # previous stage (idx-1), but we store the failing
+                        # stage name so resume knows where to retry.
+                        prev_stage = stage_names[idx - 1] if idx > 0 else stage_name
+                        try:
+                            checkpoint_mgr.mark_failed(
+                                run_id=self.run_id,
+                                stage_name=prev_stage,
+                                stage_index=idx - 1 if idx > 0 else 0,
+                                error=f"Stage {stage_name} failed: {exc}",
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to save checkpoint for failed stage %s",
+                                stage_name,
+                            )
+                    raise
+                logger.info("Completed stage: %s", stage_name)
+
+                # Data handoff between stages
+                self._handoff(stage_name, stage, context)
+
+                # Collect metrics
+                if hasattr(stage, "metrics") and hasattr(stage.metrics, "to_dict"):
+                    self.stage_metrics.append(stage.metrics.to_dict())
+
+                # Check error tolerance after each stage
+                self._check_error_tolerance()
+
+                # Save checkpoint after successful stage
+                if checkpoint_mgr is not None:
+                    checkpoint_mgr.save_checkpoint(
+                        run_id=self.run_id,
+                        stage_name=stage_name,
+                        stage_index=idx,
+                    )
+
+            # Persist run metrics to asre_run_metrics table
+            if metrics_writer is not None and self.stage_metrics:
+                metrics_writer.write_metrics(self.stage_metrics)
+
+            # Mark run as completed
             if checkpoint_mgr is not None:
-                checkpoint_mgr.save_checkpoint(
-                    run_id=self.run_id,
-                    stage_name=stage_name,
-                    stage_index=idx,
+                last_stage = stage_names[-1] if stage_names else ""
+                last_index = len(stage_names) - 1 if stage_names else 0
+                checkpoint_mgr.mark_completed(
+                    self.run_id,
+                    stage_name=last_stage,
+                    stage_index=last_index,
                 )
 
-        # Persist run metrics to asre_run_metrics table
-        if metrics_writer is not None and self.stage_metrics:
-            metrics_writer.write_metrics(self.stage_metrics)
-
-        # Mark run as completed
-        if checkpoint_mgr is not None:
-            checkpoint_mgr.mark_completed(self.run_id)
-
-        return {
-            "run_id": self.run_id,
-            "mode": self.mode,
-            "stages_completed": len(self.stage_metrics),
-        }
+            return {
+                "run_id": self.run_id,
+                "mode": self.mode,
+                "stages_completed": len(self.stage_metrics),
+            }
+        except Exception as exc:
+            if health_state is not None and getattr(health_state, "is_healthy", None):
+                if health_state.is_healthy():
+                    health_state.mark_failed(str(exc))
+            raise
 
     def _get_fail_threshold(self) -> float:
         """Get the failed_event_rate_fail threshold from config."""
@@ -357,6 +496,88 @@ class PipelineRunner:
         threshold = self._get_fail_threshold()
         checker = ErrorToleranceChecker(fail_threshold=threshold)
         checker.check(failed=total_errors, total=total_in)
+
+    @staticmethod
+    def _full_refresh_cleanup(adapter: Any) -> None:
+        """Clear derived tables for a full refresh run."""
+        for table in _FULL_REFRESH_TABLES:
+            try:
+                adapter.execute_ddl(f"DELETE FROM {table} WHERE 1=1")
+            except Exception:
+                logger.warning(
+                    "Full refresh cleanup skipped for missing table: %s", table
+                )
+
+    def _rehydrate_post_materialize(self, context: PipelineContext) -> None:
+        """Rehydrate encounter data from materialized tables for resume.
+
+        Reads encounters from admission_events_unified and prior stage metrics
+        from asre_run_metrics, then populates the context so post-materialize
+        stages (quality_check, episode_stitch, etc.) have their inputs.
+        """
+        adapter = context.config.get("adapter")
+        if adapter is None:
+            logger.warning("No adapter available for rehydration")
+            return
+
+        # Read encounters from admission_events_unified
+        try:
+            rows = adapter.read_source(
+                "admission_events_unified",
+                f"SELECT * FROM admission_events_unified WHERE asre_version IS NOT NULL",
+            )
+        except Exception:
+            logger.warning("Could not read admission_events_unified for rehydration")
+            rows = []
+
+        # Convert to lightweight encounter-like objects
+        from types import SimpleNamespace
+
+        scored_encounters = []
+        for row in rows:
+            enc = SimpleNamespace(
+                encounter_id=row.get("encounter_id"),
+                patient_key=row.get("patient_key"),
+                encounter_type=row.get("encounter_type"),
+                status=row.get("status"),
+                admit_ts=row.get("admit_ts"),
+                discharge_ts=row.get("discharge_ts"),
+                facility_canonical_id=row.get("facility_canonical_id"),
+                facility_name=row.get("facility_name"),
+                confidence_score=float(row.get("confidence_score", 0) or 0),
+                confidence_flags=row.get("confidence_flags", "").split(",") if row.get("confidence_flags") else [],
+                source_systems=row.get("source_systems", "").split(",") if row.get("source_systems") else [],
+                events=[],
+                has_adt=row.get("has_adt", False),
+                has_claims=row.get("has_claims", False),
+                has_auth=row.get("has_auth", False),
+                payer_id=row.get("payer_id"),
+                drg=row.get("drg"),
+                principal_diagnosis=row.get("principal_diagnosis"),
+                admitting_diagnosis=row.get("admitting_diagnosis"),
+                is_readmission=row.get("is_readmission", False),
+                transfer_chain=row.get("transfer_chain"),
+                los_hours=float(row.get("los_hours", 0) or 0),
+            )
+            scored_encounters.append(enc)
+
+        context.config["scored_encounters"] = scored_encounters
+        context.config["encounters_created"] = 0
+        context.config["encounters_updated"] = 0
+
+        # Read prior stage metrics
+        try:
+            metric_rows = adapter.read_source(
+                "asre_run_metrics",
+                f"SELECT * FROM asre_run_metrics WHERE run_id = '{self.run_id}' ORDER BY stage_name",
+            )
+            context.config["stage_metrics"] = list(metric_rows) if metric_rows else []
+        except Exception:
+            context.config["stage_metrics"] = []
+
+        logger.info(
+            "Rehydrated %d encounters for resume", len(scored_encounters)
+        )
 
     def _handoff(
         self,

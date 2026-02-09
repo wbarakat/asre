@@ -179,13 +179,14 @@ class TestExcludeFilters:
 
         results = pg_adapter.read_source("adt_vendor_x", query, params)
 
-        # After Jan 16 00:00: MSG003 (A01), MSG005 (A31), MSG006 (A01), MSG007 (A08)
-        # Excluding A08 and A31: MSG003 (A01 Jan 16 08:00), MSG006 (A01 Jan 17 07:00)
-        assert len(results) == 2
+        # After Jan 16 00:00: MSG002 (A03), MSG003 (A01), MSG005 (A31), MSG006 (A01), MSG007 (A08)
+        # Excluding A08 and A31 leaves MSG002 (A03), MSG003 (A01), MSG006 (A01)
+        assert len(results) == 3
         hl7_events = {r["hl7_event"] for r in results}
         assert "A08" not in hl7_events
         assert "A31" not in hl7_events
         assert "A01" in hl7_events
+        assert "A03" in hl7_events
 
     def test_exclude_filter_with_no_matching_records(
         self, pg_adapter: PostgresAdapter, adt_table: str

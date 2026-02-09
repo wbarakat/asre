@@ -267,9 +267,10 @@ class TestCliDryRun:
         "    database: test\n"
     )
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main._create_pipeline_runner")
     def test_dry_run_flag_passed_to_runner(
-        self, mock_create: MagicMock, tmp_path: Path
+        self, mock_create: MagicMock, _mock_license: MagicMock, tmp_path: Path
     ) -> None:
         """--dry-run flag should result in dry_run=True in pipeline config."""
         mock_runner = MagicMock()
@@ -308,9 +309,10 @@ class TestCliDryRun:
             assert len(call_kwargs.args) >= 4
             assert call_kwargs.args[3] is True
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main._create_pipeline_runner")
     def test_dry_run_env_var(
-        self, mock_create: MagicMock, tmp_path: Path
+        self, mock_create: MagicMock, _mock_license: MagicMock, tmp_path: Path
     ) -> None:
         """ASRE_DRY_RUN=true should enable dry-run mode."""
         mock_runner = MagicMock()

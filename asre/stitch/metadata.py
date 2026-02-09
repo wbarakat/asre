@@ -110,7 +110,8 @@ def _derive_admit_ts(encounter: StitchedEncounter) -> datetime:
     if admit_ts is None and encounter.events:
         admit_ts = min(e.event_ts for e in encounter.events)
     # Should never be None if encounter has events
-    assert admit_ts is not None, "Encounter has no events"
+    if admit_ts is None:
+        raise RuntimeError("Encounter has no events")
     return admit_ts
 
 

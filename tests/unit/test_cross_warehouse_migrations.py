@@ -252,117 +252,87 @@ class TestMigratorCrossWarehouse:
 class TestMigrationScriptsDetectWarehouseType:
     """Test that migration scripts use warehouse-appropriate DDL."""
 
-    def test_migration_001_works_with_postgres(self) -> None:
+    def test_migration_001_creates_all_tables_postgres(self) -> None:
         from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "postgres"
         _001_initial_schema.upgrade(adapter)
 
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_metadata" in ddl
-        assert "TEXT" in ddl
-
-    def test_migration_001_works_with_bigquery(self) -> None:
-        from asre.migration.versions import _001_initial_schema
-
-        adapter = MagicMock()
-        adapter.warehouse_type = "bigquery"
-        _001_initial_schema.upgrade(adapter)
-
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_metadata" in ddl
-        assert "STRING" in ddl
-
-    def test_migration_001_works_with_redshift(self) -> None:
-        from asre.migration.versions import _001_initial_schema
-
-        adapter = MagicMock()
-        adapter.warehouse_type = "redshift"
-        _001_initial_schema.upgrade(adapter)
-
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_metadata" in ddl
-        assert "VARCHAR" in ddl
-
-    def test_migration_003_output_tables_postgres(self) -> None:
-        from asre.migration.versions import _003_output_tables
-
-        adapter = MagicMock()
-        adapter.warehouse_type = "postgres"
-        _003_output_tables.upgrade(adapter)
-
-        # Should create 5 tables
-        assert adapter.execute_ddl.call_count == 5
+        # Should create 9 tables
+        assert adapter.execute_ddl.call_count == 9
         for c in adapter.execute_ddl.call_args_list:
             ddl = c[0][0]
             assert "CREATE TABLE" in ddl
 
-    def test_migration_003_output_tables_snowflake(self) -> None:
-        from asre.migration.versions import _003_output_tables
+    def test_migration_001_creates_all_tables_snowflake(self) -> None:
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "snowflake"
-        _003_output_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        assert adapter.execute_ddl.call_count == 5
+        assert adapter.execute_ddl.call_count == 9
 
-    def test_migration_003_output_tables_bigquery(self) -> None:
-        from asre.migration.versions import _003_output_tables
+    def test_migration_001_creates_all_tables_bigquery(self) -> None:
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "bigquery"
-        _003_output_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        assert adapter.execute_ddl.call_count == 5
+        assert adapter.execute_ddl.call_count == 9
         # BigQuery uses STRING instead of TEXT
         for c in adapter.execute_ddl.call_args_list:
             ddl = c[0][0]
-            assert "TEXT" not in ddl or "asre_metadata" in ddl
+            assert "STRING" in ddl or "FLOAT64" in ddl or "BOOL" in ddl or "INT64" in ddl or "JSON" in ddl or "TIMESTAMP" in ddl
 
-    def test_migration_003_output_tables_redshift(self) -> None:
-        from asre.migration.versions import _003_output_tables
+    def test_migration_001_creates_all_tables_redshift(self) -> None:
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "redshift"
-        _003_output_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        assert adapter.execute_ddl.call_count == 5
+        assert adapter.execute_ddl.call_count == 9
 
-    def test_migration_004_episode_tables_postgres(self) -> None:
-        from asre.migration.versions import _004_episode_tables
+    def test_migration_001_contains_asre_episodes_postgres(self) -> None:
+        """asre_episodes table is created in _001 with postgres types."""
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "postgres"
-        _004_episode_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_episodes" in ddl
+        ddl_calls = [c[0][0] for c in adapter.execute_ddl.call_args_list]
+        episodes_ddl = [d for d in ddl_calls if "asre_episodes" in d]
+        assert len(episodes_ddl) == 1
+        assert "CREATE TABLE" in episodes_ddl[0]
 
-    def test_migration_004_episode_tables_bigquery(self) -> None:
-        from asre.migration.versions import _004_episode_tables
+    def test_migration_001_contains_asre_episodes_bigquery(self) -> None:
+        """asre_episodes table is created in _001 with bigquery types."""
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "bigquery"
-        _004_episode_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_episodes" in ddl
-        assert "STRING" in ddl
+        ddl_calls = [c[0][0] for c in adapter.execute_ddl.call_args_list]
+        episodes_ddl = [d for d in ddl_calls if "asre_episodes" in d]
+        assert len(episodes_ddl) == 1
+        assert "CREATE TABLE" in episodes_ddl[0]
+        assert "STRING" in episodes_ddl[0]
 
-    def test_migration_004_episode_tables_redshift(self) -> None:
-        from asre.migration.versions import _004_episode_tables
+    def test_migration_001_contains_asre_episodes_redshift(self) -> None:
+        """asre_episodes table is created in _001 with redshift types."""
+        from asre.migration.versions import _001_initial_schema
 
         adapter = MagicMock()
         adapter.warehouse_type = "redshift"
-        _004_episode_tables.upgrade(adapter)
+        _001_initial_schema.upgrade(adapter)
 
-        ddl = adapter.execute_ddl.call_args[0][0]
-        assert "CREATE TABLE" in ddl
-        assert "asre_episodes" in ddl
-        assert "VARCHAR" in ddl
+        ddl_calls = [c[0][0] for c in adapter.execute_ddl.call_args_list]
+        episodes_ddl = [d for d in ddl_calls if "asre_episodes" in d]
+        assert len(episodes_ddl) == 1
+        assert "CREATE TABLE" in episodes_ddl[0]
+        assert "VARCHAR" in episodes_ddl[0]

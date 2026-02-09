@@ -31,6 +31,19 @@ class DummyStage(PipelineStage):
         return batch
 
 
+@pytest.fixture(autouse=True)
+def _mock_health_server_for_resume_cli_tests() -> None:
+    """Avoid binding real ports in CLI resume tests."""
+    server = MagicMock()
+    thread = MagicMock()
+    health_state = MagicMock()
+    with patch(
+        "asre.cli.main._start_health_server",
+        return_value=(server, thread, health_state),
+    ), patch("asre.cli.main._validate_license_or_exit"):
+        yield
+
+
 def _make_dummy_stages() -> dict[str, DummyStage]:
     """Create a full set of dummy stages."""
     return {
@@ -119,8 +132,8 @@ class TestRunCommandExists:
 class TestResumeLogicWithMockCheckpoints:
     """Tests for resume logic using PipelineRunner with mock checkpoints."""
 
-    def test_resume_skips_completed_stages(self) -> None:
-        """Resuming a run that completed through stage 4 should skip stages 0-4."""
+    def test_resume_replays_all_stages_for_correctness(self) -> None:
+        """Resume replays all stages because intermediate outputs are not persisted."""
         mock_adapter = MagicMock()
         # Checkpoint says stages 0-4 completed (through 'dedup', index 4)
         mock_adapter.read_source.return_value = [{
@@ -139,14 +152,12 @@ class TestResumeLogicWithMockCheckpoints:
 
         runner.run(resume_run_id="run_20250101_120000")
 
-        # Stages 0-4 should be skipped
-        assert not stages["ingest"].called
-        assert not stages["canonicalize"].called
-        assert not stages["facility_normalize"].called
-        assert not stages["stitch"].called
-        assert not stages["dedup"].called
-
-        # Stages 5-8 should run
+        # Resume intentionally replays all stages from the beginning.
+        assert stages["ingest"].called
+        assert stages["canonicalize"].called
+        assert stages["facility_normalize"].called
+        assert stages["stitch"].called
+        assert stages["dedup"].called
         assert stages["reconcile"].called
         assert stages["score"].called
         assert stages["materialize"].called

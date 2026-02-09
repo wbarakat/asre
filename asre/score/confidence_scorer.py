@@ -99,6 +99,11 @@ class ConfidenceScorer:
         has_auth = "auth" in source_types
 
         facility_resolved = encounter.facility_canonical_id is not None
+        if facility_resolved:
+            for evt in events:
+                if getattr(evt, "facility_match_type", None) == "new":
+                    facility_resolved = False
+                    break
 
         # TIMESTAMPS_CONSISTENT: no TIMESTAMP_MISMATCH flag
         flags = encounter.confidence_flags

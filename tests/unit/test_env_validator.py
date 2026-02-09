@@ -93,6 +93,17 @@ class TestValidateEnvVars:
             result = validate_env_vars()
         assert result.is_valid is True
 
+    def test_overrides_mark_required_vars_present(self) -> None:
+        """Overrides can satisfy required vars even if env is empty."""
+        overrides = {
+            "ASRE_CUSTOMER_ID": "test_customer",
+            "ASRE_CONFIG_PATH": "/tmp/config",
+        }
+        with mock.patch.dict(os.environ, {}, clear=True):
+            result = validate_env_vars(overrides=overrides)
+        assert "ASRE_CUSTOMER_ID" not in result.missing
+        assert "ASRE_CONFIG_PATH" not in result.missing
+
 
 class TestEnvVarLists:
     """Tests for the env var constant lists."""
@@ -110,3 +121,5 @@ class TestEnvVarLists:
         assert "ASRE_LOG_LEVEL" in OPTIONAL_ENV_VARS
         assert "ASRE_ALERT_WEBHOOK_URL" in OPTIONAL_ENV_VARS
         assert "ASRE_DRY_RUN" in OPTIONAL_ENV_VARS
+        assert "ASRE_REQUIRE_UTF8" in OPTIONAL_ENV_VARS
+        assert "ASRE_LICENSE_KEY" in OPTIONAL_ENV_VARS

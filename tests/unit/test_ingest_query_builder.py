@@ -111,3 +111,14 @@ class TestFullModeIngest:
         assert "status = 'VOID'" in query
         # Still selects from correct table
         assert "claims_data" in query
+
+    def test_full_mode_includes_order_by_when_requested(self) -> None:
+        """Order-by should be appended for deterministic ingest."""
+        builder = IngestQueryBuilder(
+            table="raw_adt_events",
+            incremental_key="message_ts",
+            mode="full",
+            order_by=["message_ts", "source_record_id"],
+        )
+        query = builder.build_query()
+        assert "ORDER BY message_ts, source_record_id" in query

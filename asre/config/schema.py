@@ -38,6 +38,8 @@ class EncounterStitchingConfig(BaseModel):
 
     time_window_hours: int = 48
     facility_must_match: bool = True
+    use_canonical_history: bool = True
+    history_lookback_days: int = 90
     patient_class_transitions: list[dict[str, str]] = [
         {"from": "ed", "to": "inpatient", "action": "merge"},
         {"from": "observation", "to": "inpatient", "action": "merge"},
@@ -86,6 +88,10 @@ class FacilityNormalizationConfig(BaseModel):
     """Facility normalization settings."""
 
     fuzzy_threshold: float = 0.85
+    use_npi_registry: bool = True
+    use_ccn_registry: bool = True
+    registry_path: str | None = None
+    sqlite_registry_path: str | None = None
     abbreviations: dict[str, str] = {
         "MED CTR": "MEDICAL CENTER",
         "MED": "MEDICAL",
@@ -145,6 +151,7 @@ class AlertingConfig(BaseModel):
     """Alerting and quality threshold configuration."""
 
     webhook_urls: list[str] = []
+    block_on_statuses: list[str] = ["fail"]
     thresholds: dict[str, float] = {
         "duplicate_rate_warn": 0.05,
         "duplicate_rate_fail": 0.15,

@@ -23,7 +23,7 @@ ASRE is **not** an analytics engine, EHR replacement, or billing system. It read
 ### Prerequisites
 
 - Python 3.11+
-- PostgreSQL (local development warehouse stand-in)
+- A supported warehouse: PostgreSQL, Snowflake, BigQuery, or Redshift
 - Docker (for containerized deployment)
 
 ### Local Development Setup
@@ -34,23 +34,37 @@ git clone <repo-url>
 cd asre
 pip install -e ".[dev]"
 
+# Optional connector packages for non-Postgres local runs
+# pip install -e ".[dev,snowflake]"
+# pip install -e ".[dev,bigquery]"
+# pip install -e ".[dev,redshift]"
+
 # Set warehouse connection environment variables
-export WAREHOUSE_HOST=localhost
-export WAREHOUSE_PORT=5432
-export WAREHOUSE_DATABASE=asre_dev
-export WAREHOUSE_USER=asre
-export WAREHOUSE_PASSWORD=asre_local
-export WAREHOUSE_SCHEMA=public
+cat > /tmp/asre_warehouse.json <<'JSON'
+{
+  "host": "localhost",
+  "port": 5432,
+  "database": "asre_dev",
+  "user": "asre",
+  "password": "asre_local",
+  "schema": "public"
+}
+JSON
+
+export ASRE_CONFIG_PATH="$PWD/customer_config"
+export ASRE_CUSTOMER_ID="test_customer"
+export ASRE_WAREHOUSE_TYPE="postgres"  # postgres | snowflake | bigquery | redshift
+export ASRE_WAREHOUSE_CREDENTIALS="/tmp/asre_warehouse.json"
 
 # Validate your configuration
 asre validate-config \
-  --config-path customer_config \
-  --customer-id test_customer
+  --config-path "$ASRE_CONFIG_PATH" \
+  --customer-id "$ASRE_CUSTOMER_ID"
 
 # Run the pipeline (incremental mode, the default)
 asre run \
-  --config-path customer_config \
-  --customer-id test_customer \
+  --config-path "$ASRE_CONFIG_PATH" \
+  --customer-id "$ASRE_CUSTOMER_ID" \
   --mode incremental
 
 # Run tests
@@ -78,6 +92,8 @@ make clean            # Remove caches
 
 ASRE uses YAML configuration files organized per customer. Secrets are injected via `${ENV_VAR}` substitution -- never store plaintext credentials in YAML files.
 
+For the shortest setup, follow `docs/onboarding.md`. For operational guidance, see `docs/runbook.md`.
+
 ### Directory Structure
 
 ```
@@ -101,13 +117,7 @@ customer:
 
 warehouse:
   type: postgres                       # postgres | snowflake | bigquery | redshift
-  connection:
-    host: "${WAREHOUSE_HOST}"
-    port: "${WAREHOUSE_PORT}"
-    database: "${WAREHOUSE_DATABASE}"
-    user: "${WAREHOUSE_USER}"
-    password: "${WAREHOUSE_PASSWORD}"
-    schema: "${WAREHOUSE_SCHEMA}"
+  connection: {}                       # populated from ASRE_WAREHOUSE_CREDENTIALS
 
 schedule:
   mode: incremental                    # full | incremental
@@ -120,6 +130,8 @@ schedule:
 encounter_stitching:
   time_window_hours: 48
   facility_must_match: true
+  use_canonical_history: true         # preserve encounter_id for late data
+  history_lookback_days: 90
   patient_class_transitions:
     - from: ed
       to: inpatient
@@ -265,45 +277,61 @@ All required environment variables must be set before running the container.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `WAREHOUSE_HOST` | Yes | Database hostname |
-| `WAREHOUSE_PORT` | Yes | Database port |
-| `WAREHOUSE_DATABASE` | Yes | Database name |
-| `WAREHOUSE_USER` | Yes | Database username |
-| `WAREHOUSE_PASSWORD` | Yes | Database password |
-| `WAREHOUSE_SCHEMA` | Yes | Target schema |
 | `ASRE_CONFIG_PATH` | Yes | Path to customer config root directory |
 | `ASRE_CUSTOMER_ID` | Yes | Customer subdirectory name |
-| `ASRE_DRY_RUN` | No | Set to `1` to run without writing output |
-| `ALERT_WEBHOOK_URL` | No | Webhook URL for quality alert notifications |
+| `ASRE_WAREHOUSE_TYPE` | Conditional | Required when `warehouse.type` is not fully defined in `config.yaml` |
+| `ASRE_WAREHOUSE_CREDENTIALS` | Conditional | Required when `warehouse.connection` is not fully defined in `config.yaml` |
+| `ASRE_RUN_MODE` | No | `full` or `incremental` (default: `incremental`) |
+| `ASRE_LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
+| `ASRE_ALERT_WEBHOOK_URL` | No | Webhook URL for quality alert notifications |
+| `ASRE_DRY_RUN` | No | `true` to run without writing outputs |
+| `ASRE_REQUIRE_UTF8` | No | `true` to enforce UTF-8 server/client encoding (default: `true`) |
+| `ASRE_HEALTH_PORT` | No | Health check port (default: 8080) |
+| `ASRE_HEALTH_BIND` | No | Health check bind address (default: 127.0.0.1) |
+
+`ASRE_WAREHOUSE_CREDENTIALS` accepts:
+- JSON string (connection dict)
+- Path to JSON/YAML file (connection dict)
+- Postgres/Redshift DSN string (e.g. `postgresql://user:pass@host:5432/db?schema=public`)
+
+Most deployments set `ASRE_WAREHOUSE_TYPE` and `ASRE_WAREHOUSE_CREDENTIALS` via
+environment variables (secrets manager) and keep `warehouse.connection: {}` in
+customer config files.
+
+PostgreSQL deployments should use UTF-8 server encoding. For local dev you can
+disable enforcement via `ASRE_REQUIRE_UTF8=false` or
+`warehouse.connection.require_utf8: false`.
 
 ### Running with Docker
 
 ```bash
 # Validate configuration
 docker run --rm \
-  -e WAREHOUSE_HOST=db.example.com \
-  -e WAREHOUSE_PORT=5432 \
-  -e WAREHOUSE_DATABASE=warehouse \
-  -e WAREHOUSE_USER=asre_svc \
-  -e WAREHOUSE_PASSWORD=secret \
-  -e WAREHOUSE_SCHEMA=asre \
+  -e ASRE_CONFIG_PATH=/app/customer_config \
+  -e ASRE_CUSTOMER_ID=acme_health \
+  -e ASRE_WAREHOUSE_TYPE=postgres \
+  -e ASRE_WAREHOUSE_CREDENTIALS=/app/warehouse.json \
+  -v $(pwd)/warehouse.json:/app/warehouse.json \
   asre-engine:latest \
   validate-config --config-path /app/customer_config --customer-id acme_health
 
 # Run pipeline (incremental)
 docker run --rm \
-  -e WAREHOUSE_HOST=db.example.com \
-  -e WAREHOUSE_PORT=5432 \
-  -e WAREHOUSE_DATABASE=warehouse \
-  -e WAREHOUSE_USER=asre_svc \
-  -e WAREHOUSE_PASSWORD=secret \
-  -e WAREHOUSE_SCHEMA=asre \
+  -e ASRE_CONFIG_PATH=/app/customer_config \
+  -e ASRE_CUSTOMER_ID=acme_health \
+  -e ASRE_WAREHOUSE_TYPE=postgres \
+  -e ASRE_WAREHOUSE_CREDENTIALS=/app/warehouse.json \
+  -v $(pwd)/warehouse.json:/app/warehouse.json \
   asre-engine:latest \
   run --config-path /app/customer_config --customer-id acme_health --mode incremental
 
 # Full historical reprocessing
 docker run --rm \
-  -e WAREHOUSE_HOST=db.example.com \
+  -e ASRE_CONFIG_PATH=/app/customer_config \
+  -e ASRE_CUSTOMER_ID=acme_health \
+  -e ASRE_WAREHOUSE_TYPE=postgres \
+  -e ASRE_WAREHOUSE_CREDENTIALS=/app/warehouse.json \
+  -v $(pwd)/warehouse.json:/app/warehouse.json \
   # ... (same env vars) ...
   asre-engine:latest \
   run --config-path /app/customer_config --customer-id acme_health --mode full
@@ -343,8 +371,8 @@ asre run [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--mode` | `incremental` | `full` (reprocess all history) or `incremental` (since last watermark) |
-| `--resume RUN_ID` | None | Resume a previously failed run by its run_id |
+| `--mode` | `incremental` | `full` (clears derived tables and rebuilds) or `incremental` (since last watermark) |
+| `--resume RUN_ID` | None | Replay a previously failed run by its run_id (replays all stages) |
 | `--dry-run` | False | Run pipeline without writing to output tables |
 | `--config-path` | (required) | Root config directory path |
 | `--customer-id` | (required) | Customer subdirectory name |
@@ -517,3 +545,76 @@ mypy asre/ --strict             # Type checking
 ```
 
 Unit test coverage targets: config loader, field mapper, event type resolver, facility normalizer, encounter stitcher, deduplicator, confidence scorer.
+
+### Production Readiness Gate
+
+Run this exact sequence before promoting to production:
+
+```bash
+# 1) Static checks
+python3 -m mypy asre/ --strict
+
+# 2) Unit tests (coverage gate)
+python3 -m pytest tests/unit/ -v --tb=short --cov=asre --cov-report=term-missing --cov-fail-under=80
+
+# 3) Integration tests (real Postgres)
+ASRE_TEST_PG_HOST=localhost \
+ASRE_TEST_PG_PORT=5432 \
+ASRE_TEST_PG_DATABASE=asre_test \
+ASRE_TEST_PG_USER=asre_test \
+ASRE_TEST_PG_PASSWORD=asre_test \
+ASRE_TEST_PG_SCHEMA=public \
+python3 -m pytest tests/integration/ -v --tb=short
+
+# 4) Snapshot consistency
+python3 -m pytest tests/unit/ --snapshot-warn-unused
+
+# 5) dbt validation
+cd dbt_project
+DBT_PROFILES_DIR=. \
+ASRE_DB_HOST=localhost \
+ASRE_DB_PORT=5432 \
+ASRE_DB_USER=asre_test \
+ASRE_DB_PASSWORD=asre_test \
+ASRE_DB_NAME=asre_test \
+dbt compile --target dev
+
+ASRE_DB_HOST=localhost \
+ASRE_DB_PORT=5432 \
+ASRE_DB_USER=asre_test \
+ASRE_DB_PASSWORD=asre_test \
+ASRE_DB_NAME=asre_test \
+python3 - <<'PY'
+import os
+from asre.ingest.postgres import PostgresAdapter
+from asre.migration.migrator import Migrator
+
+cfg = {
+    "host": os.environ["ASRE_DB_HOST"],
+    "port": os.environ["ASRE_DB_PORT"],
+    "database": os.environ["ASRE_DB_NAME"],
+    "user": os.environ["ASRE_DB_USER"],
+    "password": os.environ["ASRE_DB_PASSWORD"],
+    "schema": "public",
+}
+adapter = PostgresAdapter(cfg)
+adapter.connect()
+try:
+    Migrator(adapter).run()
+finally:
+    adapter.disconnect()
+PY
+
+DBT_PROFILES_DIR=. \
+ASRE_DB_HOST=localhost \
+ASRE_DB_PORT=5432 \
+ASRE_DB_USER=asre_test \
+ASRE_DB_PASSWORD=asre_test \
+ASRE_DB_NAME=asre_test \
+dbt test --target dev
+```
+
+Notes:
+- `dbt test` validates ASRE output tables and will fail if those relations do not exist yet.
+- Run migrations (or one pipeline run) before `dbt test` so required ASRE tables exist.
+- For release readiness, every step above must pass with no failures.

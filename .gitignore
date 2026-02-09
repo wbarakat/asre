@@ -47,3 +47,8 @@ htmlcov/
 
 # Docker
 .docker/
+
+# License keys (never commit private keys)
+*.pem
+*.key
+asre/license/public_key.pem

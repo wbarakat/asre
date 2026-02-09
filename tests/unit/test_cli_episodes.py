@@ -32,9 +32,10 @@ class TestEpisodesCommandGroup:
 class TestEpisodesRecompute:
     """Tests for 'asre episodes --recompute' command."""
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main._get_diagnostic_adapter")
     def test_recompute_reads_encounters_from_db(
-        self, mock_get_adapter: MagicMock
+        self, mock_get_adapter: MagicMock, _mock_license: MagicMock
     ) -> None:
         """Recompute reads encounters from admission_events_unified table."""
         adapter = MagicMock()
@@ -54,10 +55,11 @@ class TestEpisodesRecompute:
         first_call_query = str(read_calls[0])
         assert "admission_events_unified" in first_call_query
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main.load_config")
     @patch("asre.cli.main._get_diagnostic_adapter")
     def test_recompute_runs_episode_stages_only(
-        self, mock_get_adapter: MagicMock, mock_load_config: MagicMock
+        self, mock_get_adapter: MagicMock, mock_load_config: MagicMock, _mock_license: MagicMock
     ) -> None:
         """Recompute runs episode stages (stitch, materialize, quality) but NOT
         ingest, canonicalize, stitch, dedup, reconcile, score stages."""
@@ -122,9 +124,10 @@ class TestEpisodesRecompute:
         assert result.exit_code == 0
         assert "episode" in result.output.lower()
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main._get_diagnostic_adapter")
     def test_recompute_no_encounters_shows_message(
-        self, mock_get_adapter: MagicMock
+        self, mock_get_adapter: MagicMock, _mock_license: MagicMock
     ) -> None:
         """Recompute with no encounters in DB shows informative message."""
         adapter = MagicMock()
@@ -140,9 +143,10 @@ class TestEpisodesRecompute:
         assert result.exit_code == 0
         assert "no encounters" in result.output.lower() or "0" in result.output
 
+    @patch("asre.cli.main._validate_license_or_exit")
     @patch("asre.cli.main._get_diagnostic_adapter")
     def test_recompute_does_not_run_ingest_or_score(
-        self, mock_get_adapter: MagicMock
+        self, mock_get_adapter: MagicMock, _mock_license: MagicMock
     ) -> None:
         """Recompute should NOT invoke ingest, canonicalize, stitch, dedup,
         reconcile, or score stages — only episode stages."""

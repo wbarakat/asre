@@ -21,7 +21,7 @@ class TestRunAutoMigration:
         mock_migrator_instance = MagicMock()
         mock_migrator_instance.get_schema_version.return_value = 0
         mock_migrator_instance.run.return_value = MagicMock(
-            applied=4, current_version=4
+            applied=1, current_version=1
         )
 
         with patch(
@@ -38,11 +38,9 @@ class TestRunAutoMigration:
         adapter = MagicMock()
 
         mock_migrator_instance = MagicMock()
-        mock_migrator_instance.get_schema_version.return_value = 4
+        mock_migrator_instance.get_schema_version.return_value = 1
         mock_migrator_instance.discover_migrations.return_value = [
             MagicMock(version=1),
-            MagicMock(version=3),
-            MagicMock(version=4),
         ]
 
         with patch(
@@ -58,14 +56,12 @@ class TestRunAutoMigration:
         adapter = MagicMock()
 
         mock_migrator_instance = MagicMock()
-        mock_migrator_instance.get_schema_version.return_value = 1
+        mock_migrator_instance.get_schema_version.return_value = 0
         mock_migrator_instance.discover_migrations.return_value = [
             MagicMock(version=1),
-            MagicMock(version=3),
-            MagicMock(version=4),
         ]
         mock_migrator_instance.run.return_value = MagicMock(
-            applied=2, current_version=4
+            applied=1, current_version=1
         )
 
         with patch(
@@ -82,13 +78,13 @@ class TestRunAutoMigration:
         mock_migrator_instance = MagicMock()
         mock_migrator_instance.get_schema_version.return_value = 0
         mock_migrator_instance.run.side_effect = RuntimeError(
-            "Migration 003 failed: column X already exists"
+            "Migration 001 failed: table already exists"
         )
 
         with patch(
             "asre.migration.migrator.Migrator", return_value=mock_migrator_instance
         ):
-            with pytest.raises(RuntimeError, match="Migration 003 failed"):
+            with pytest.raises(RuntimeError, match="Migration 001 failed"):
                 _run_auto_migration(adapter)
 
 
@@ -105,7 +101,9 @@ class TestAutoMigrationInPipeline:
         }
 
         with patch("asre.cli.main._create_pipeline_runner") as mock_create, \
-             patch("asre.cli.main._run_auto_migration") as mock_migrate:
+             patch("asre.cli.main._run_auto_migration") as mock_migrate, \
+             patch("asre.cli.main._check_env_or_exit"), \
+             patch("asre.cli.main._validate_license_or_exit"):
 
             # _create_pipeline_runner is the whole function; we need to
             # verify _run_auto_migration is called inside it. Since we're
@@ -130,13 +128,15 @@ class TestAutoMigrationInPipeline:
 
         mock_config = MagicMock()
         mock_config.warehouse.connection = {"host": "localhost"}
+        mock_config.warehouse.type = "postgres"
         mock_config.sources = []
         mock_config.facility_aliases = None
 
         mock_adapter = MagicMock()
+        mock_adapter.connect.return_value = None
 
         with patch("asre.cli.main.load_config", return_value=mock_config), \
-             patch("asre.ingest.postgres.PostgresAdapter", return_value=mock_adapter), \
+             patch("asre.ingest.adapter_factory.create_adapter", return_value=mock_adapter), \
              patch("asre.cli.main._run_auto_migration") as mock_migrate, \
              patch("asre.pipeline.runner.PipelineRunner"):
 
@@ -150,17 +150,21 @@ class TestAutoMigrationInPipeline:
 
         mock_config = MagicMock()
         mock_config.warehouse.connection = {"host": "localhost"}
+        mock_config.warehouse.type = "postgres"
         mock_config.sources = []
         mock_config.facility_aliases = None
 
         mock_adapter = MagicMock()
+        mock_adapter.connect.return_value = None
 
         with patch("asre.cli.main.load_config", return_value=mock_config), \
-             patch("asre.ingest.postgres.PostgresAdapter", return_value=mock_adapter), \
+             patch("asre.ingest.adapter_factory.create_adapter", return_value=mock_adapter), \
              patch(
                  "asre.cli.main._run_auto_migration",
                  side_effect=RuntimeError("Migration failed"),
-             ):
+             ), \
+             patch("asre.cli.main._check_env_or_exit"), \
+             patch("asre.cli.main._validate_license_or_exit"):
 
             runner = CliRunner()
             result = runner.invoke(cli, [

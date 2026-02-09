@@ -74,6 +74,15 @@ class IngestAdapter(ABC):
         """
 
     @abstractmethod
+    def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
+        """Execute a DML statement (UPDATE, DELETE, INSERT) with parameters.
+
+        Args:
+            statement: The DML statement with named parameter placeholders.
+            params: Parameter values for the statement.
+        """
+
+    @abstractmethod
     def write_records(
         self,
         table_name: str,

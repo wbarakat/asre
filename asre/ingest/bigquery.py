@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
+BigQueryClient: Any
+QueryJobConfig: Any
+ScalarQueryParameter: Any
 try:
     from google.cloud.bigquery import (
-        Client as BigQueryClient,
-        QueryJobConfig,
-        ScalarQueryParameter,
+        Client as _BigQueryClient,
+        QueryJobConfig as _QueryJobConfig,
+        ScalarQueryParameter as _ScalarQueryParameter,
     )
 
+    BigQueryClient = _BigQueryClient
+    QueryJobConfig = _QueryJobConfig
+    ScalarQueryParameter = _ScalarQueryParameter
     _HAS_BIGQUERY = True
 except ImportError:
     BigQueryClient = None
@@ -57,9 +63,8 @@ class BigQueryAdapter(IngestAdapter):
             if credentials_path:
                 from google.oauth2 import service_account
 
-                credentials = service_account.Credentials.from_service_account_file(
-                    credentials_path
-                )
+                credentials_cls = cast(Any, service_account.Credentials)
+                credentials = credentials_cls.from_service_account_file(credentials_path)
                 kwargs["credentials"] = credentials
             self._client = BigQueryClient(**kwargs)
         except Exception as exc:
@@ -96,7 +101,8 @@ class BigQueryAdapter(IngestAdapter):
         Python representations (dicts and lists). Downstream stages handle
         further processing.
         """
-        assert self._client is not None, "Not connected. Call connect() first."
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
 
         if params:
             job_config = self._make_job_config(
@@ -111,7 +117,8 @@ class BigQueryAdapter(IngestAdapter):
 
     def get_watermark(self, source_name: str) -> datetime | None:
         """Retrieve the last watermark for a source from asre_metadata."""
-        assert self._client is not None, "Not connected. Call connect() first."
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         dataset = self._config.get("dataset", "")
         query = (
             f"SELECT value FROM `{dataset}.asre_metadata` "
@@ -128,7 +135,8 @@ class BigQueryAdapter(IngestAdapter):
 
     def set_watermark(self, source_name: str, watermark: datetime) -> None:
         """Update the watermark for a source in asre_metadata using MERGE."""
-        assert self._client is not None, "Not connected. Call connect() first."
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         dataset = self._config.get("dataset", "")
         key = f"watermark_{source_name}"
         value = watermark.isoformat()
@@ -147,9 +155,28 @@ class BigQueryAdapter(IngestAdapter):
 
     def execute_ddl(self, ddl: str) -> None:
         """Execute a DDL statement."""
-        assert self._client is not None, "Not connected. Call connect() first."
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         query_job = self._client.query(ddl)
         query_job.result()  # Wait for completion
+
+    def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
+        """Execute a parameterized DML statement.
+
+        Translates :name style parameters to BigQuery's @name style.
+        """
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
+        if params:
+            import re
+            translated = re.sub(r":(\w+)", r"@\1", statement)
+            job_config = self._make_job_config(
+                [(k, "STRING", str(v)) for k, v in params.items()]
+            )
+            query_job = self._client.query(translated, job_config=job_config)
+        else:
+            query_job = self._client.query(statement)
+        query_job.result()
 
     def write_records(
         self,
@@ -162,7 +189,8 @@ class BigQueryAdapter(IngestAdapter):
         """
         if not records:
             return 0
-        assert self._client is not None, "Not connected. Call connect() first."
+        if self._client is None:
+            raise RuntimeError("Not connected. Call connect() first.")
 
         dataset = self._config.get("dataset", "")
         columns = list(records[0].keys())

@@ -144,6 +144,50 @@ class Migrator:
 
         return MigrationResult(applied=applied, current_version=current_version)
 
+    def rollback(self, target_version: int = 0) -> MigrationResult:
+        """Rollback migrations down to target_version.
+
+        Iterates migrations in reverse order, calling downgrade() on each
+        migration whose version is > target_version.
+
+        Args:
+            target_version: Version to rollback to. Defaults to 0 (all migrations).
+
+        Returns:
+            MigrationResult with count of rolled-back migrations and current version.
+        """
+        current_version = self.get_schema_version()
+        if current_version <= target_version:
+            return MigrationResult(applied=0, current_version=current_version)
+
+        migrations = self.discover_migrations()
+        rolled_back = 0
+
+        for migration in reversed(migrations):
+            if migration.version <= target_version:
+                continue
+            if migration.version > current_version:
+                continue
+
+            module = importlib.import_module(migration.module_name)
+            if hasattr(module, "downgrade"):
+                module.downgrade(self._adapter)
+                rolled_back += 1
+
+            current_version = migration.version - 1
+            if current_version > 0:
+                self.set_schema_version(current_version)
+            else:
+                # Drop metadata table is handled by migration 001's downgrade
+                try:
+                    self._adapter.execute_ddl(
+                        "DELETE FROM asre_metadata WHERE key = 'schema_version'"
+                    )
+                except Exception:
+                    pass
+
+        return MigrationResult(applied=rolled_back, current_version=target_version)
+
     def _create_metadata_table(self) -> None:
         """Create the asre_metadata table."""
         self._adapter.execute_ddl(

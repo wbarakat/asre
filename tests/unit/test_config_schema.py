@@ -118,16 +118,32 @@ class TestEpisodeStitchingConfig:
         assert cfg.ed_bounceback_days == 7
 
 
+class TestEncounterStitchingConfig:
+    def test_defaults(self) -> None:
+        from asre.config.schema import EncounterStitchingConfig
+
+        cfg = EncounterStitchingConfig()
+        assert cfg.history_lookback_days == 90
+        assert cfg.use_canonical_history is True
+
+
 class TestFacilityNormalizationConfig:
     def test_defaults(self) -> None:
         cfg = FacilityNormalizationConfig()
         assert cfg.fuzzy_threshold == 0.85
         assert cfg.abbreviations is not None
         assert len(cfg.abbreviations) > 0
+        assert cfg.use_npi_registry is True
+        assert cfg.use_ccn_registry is True
+        assert cfg.registry_path is None
 
     def test_custom_threshold(self) -> None:
         cfg = FacilityNormalizationConfig(fuzzy_threshold=0.90)
         assert cfg.fuzzy_threshold == 0.90
+
+    def test_custom_registry_path(self) -> None:
+        cfg = FacilityNormalizationConfig(registry_path="/tmp/facility_registry.csv")
+        assert cfg.registry_path == "/tmp/facility_registry.csv"
 
 
 class TestConfidenceScoringConfig:
@@ -156,6 +172,7 @@ class TestAlertingConfig:
     def test_defaults(self) -> None:
         cfg = AlertingConfig()
         assert cfg.webhook_urls == []
+        assert cfg.block_on_statuses == ["fail"]
         assert cfg.thresholds is not None
 
     def test_custom_webhooks(self) -> None:

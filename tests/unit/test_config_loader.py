@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,57 @@ class TestLoadConfigValid:
         # Sub-configs with defaults should be populated
         assert result.schedule.mode == "incremental"
         assert result.encounter_stitching.time_window_hours == 48
+
+
+class TestWarehouseEnvOverrides:
+    """Test warehouse config overrides via ASRE_WAREHOUSE_* env vars."""
+
+    def test_env_credentials_override_warehouse_connection(self, tmp_path: Path) -> None:
+        customer_dir = tmp_path / "test_customer"
+        customer_dir.mkdir()
+        (customer_dir / "sources").mkdir()
+
+        config_yaml = {
+            "customer": {"customer_id": "test_customer", "customer_name": "Test Customer"},
+        }
+        (customer_dir / "config.yaml").write_text(yaml.dump(config_yaml))
+
+        creds = {"host": "envhost", "port": 5432, "database": "envdb"}
+        env = {
+            "ASRE_WAREHOUSE_TYPE": "postgres",
+            "ASRE_WAREHOUSE_CREDENTIALS": json.dumps(creds),
+        }
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            for key, value in env.items():
+                monkeypatch.setenv(key, value)
+            result = load_config(str(tmp_path), "test_customer")
+
+        assert result.warehouse.type == "postgres"
+        assert result.warehouse.connection["host"] == "envhost"
+        assert result.warehouse.connection["database"] == "envdb"
+
+    def test_env_require_utf8_overrides_connection(self, tmp_path: Path) -> None:
+        customer_dir = tmp_path / "test_customer"
+        customer_dir.mkdir()
+        (customer_dir / "sources").mkdir()
+
+        config_yaml = {
+            "customer": {"customer_id": "test_customer", "customer_name": "Test Customer"},
+            "warehouse": {"type": "postgres", "connection": {}},
+        }
+        (customer_dir / "config.yaml").write_text(yaml.dump(config_yaml))
+
+        env = {
+            "ASRE_WAREHOUSE_TYPE": "postgres",
+            "ASRE_REQUIRE_UTF8": "false",
+        }
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            for key, value in env.items():
+                monkeypatch.setenv(key, value)
+            result = load_config(str(tmp_path), "test_customer")
+
+        assert result.warehouse.type == "postgres"
+        assert result.warehouse.connection["require_utf8"] is False
 
 
 class TestSourceConfigLoading:

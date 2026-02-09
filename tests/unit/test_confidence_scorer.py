@@ -28,6 +28,7 @@ def _make_event(
     source_system: str = "adt_vendor_x",
     patient_key: str = "PAT_001",
     facility_canonical_id: str | None = "FAC_001",
+    facility_match_type: str | None = None,
     admit_flag: bool = False,
     discharge_flag: bool = False,
     patient_class: str | None = None,
@@ -41,6 +42,7 @@ def _make_event(
         source_record_id="src_001",
         facility_raw="Test Hospital",
         facility_canonical_id=facility_canonical_id,
+        facility_match_type=facility_match_type,
         admit_flag=admit_flag,
         discharge_flag=discharge_flag,
         auth_flag=False,
@@ -123,6 +125,25 @@ class TestConfidenceScorer:
         score = scorer.compute_score(rec)
 
         assert score == 1.0
+
+    def test_facility_new_is_not_resolved(self) -> None:
+        events = [
+            _make_event(
+                event_type="ADMIT",
+                source_system="adt_vendor_x",
+                admit_flag=True,
+                patient_class="inpatient",
+                facility_canonical_id="FAC_001",
+                facility_match_type="new",
+            ),
+        ]
+        enc = _make_encounter(events)
+        rec = _make_reconciled(enc, flags=[])
+
+        scorer = ConfidenceScorer()
+        signals = scorer.evaluate_signals(rec)
+
+        assert signals["FACILITY_RESOLVED"] is False
 
     def test_only_has_claims_base_score_030(self) -> None:
         """Only HAS_CLAIMS signal -> base score = 30/100 = 0.30.

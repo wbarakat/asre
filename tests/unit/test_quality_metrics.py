@@ -718,8 +718,8 @@ class TestToRecordsWithStatus:
         assert record_map["duplicate_rate"]["status"] == "pass"
         assert record_map["failed_event_rate"]["status"] == "fail"
 
-    def test_records_without_status_when_none(self) -> None:
-        """Records do NOT include status field when statuses is None."""
+    def test_records_default_status_when_none(self) -> None:
+        """Records include status='pass' when statuses is None."""
         from asre.quality.metrics import QualityMetricComputer
 
         computer = QualityMetricComputer()
@@ -730,4 +730,7 @@ class TestToRecordsWithStatus:
             run_id="run_test",
         )
 
-        assert "status" not in records[0]
+        assert records[0]["status"] == "pass"
+        assert records[0]["detail"] is None
+        assert "metric_id" in records[0]
+        assert "run_ts" in records[0]

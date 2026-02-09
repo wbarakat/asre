@@ -1,0 +1,10 @@
+facilities: []
+  # Example facility entry (uncomment and customize):
+  # - canonical_id: "facility_001"
+  #   canonical_name: "General Hospital"
+  #   npi: "1234567890"
+  #   ccn: "010001"
+  #   facility_type: "acute"
+  #   aliases:
+  #     - "GEN HOSP"
+  #     - "GENERAL HOSPITAL MAIN CAMPUS"

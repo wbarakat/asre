@@ -24,3 +24,16 @@ Makefile
 *.swp
 *.swo
 *~
+data/
+vendor/
+docs/
+customer_docs/
+.cursor/
+.goose/
+.trae/
+.windsurf/
+.gradle/
+.agents/
+.claude/
+skills/
+prd_core_complete.json

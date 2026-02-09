@@ -13,9 +13,11 @@ from typing import Any
 from asre.canonicalize.auth_status_mapper import AuthStatusMapper
 from asre.canonicalize.diagnosis_mapper import DiagnosisCodeMapper
 from asre.canonicalize.event_type_resolver import EventTypeResolver
+from asre.canonicalize.event_id import generate_event_id
 from asre.canonicalize.mapper import FieldMapper
 from asre.canonicalize.paired_event_emitter import PairedEventEmitter
 from asre.canonicalize.patient_class_resolver import PatientClassResolver
+from asre.canonicalize.patient_class_normalizer import normalize_patient_class
 from asre.canonicalize.record_validator import process_records_with_tolerance
 from asre.config.source_schema import (
     AuthStatusMap,
@@ -57,7 +59,7 @@ class CanonicalizeStage(PipelineStage):
         self.metrics = StageMetrics("canonicalize", context.run_id)
 
         raw_records: list[dict[str, Any]] = context.config.get("raw_records", [])
-        sources: list[dict[str, Any]] = context.config.get("sources", [])
+        sources = self._normalize_sources(context.config.get("sources", []))
 
         # Build lookup from source name to config
         source_configs: dict[str, dict[str, Any]] = {
@@ -93,6 +95,18 @@ class CanonicalizeStage(PipelineStage):
 
         batch.events = canonical_events
         return batch
+
+    @staticmethod
+    def _normalize_sources(sources: list[Any]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for src in sources:
+            if hasattr(src, "model_dump"):
+                normalized.append(src.model_dump())
+            elif hasattr(src, "dict"):
+                normalized.append(src.dict())
+            else:
+                normalized.append(src)
+        return normalized
 
     def _process_source(
         self,
@@ -149,6 +163,15 @@ class CanonicalizeStage(PipelineStage):
         for record in records:
             event = mapper.map_record(record, source_name, batch_id)
             resolver.resolve(event, record)
+            event.event_id = generate_event_id(
+                source_system=event.source_system,
+                source_record_id=event.source_record_id,
+                event_type=event.event_type,
+            )
+            event.patient_class = normalize_patient_class(
+                event.patient_class,
+                event_type=event.event_type,
+            )
             events.append(event)
         return events
 
@@ -183,13 +206,24 @@ class CanonicalizeStage(PipelineStage):
             # Map diagnosis codes
             diag_codes = diagnosis_mapper.map_diagnosis_codes(record)
             principal_dx = diagnosis_mapper.map_principal_diagnosis(record)
+            admitting_dx = diagnosis_mapper.map_admitting_diagnosis(record)
             serialized_codes = DiagnosisCodeMapper.to_serializable(diag_codes)
 
             for event in paired:
                 if patient_class is not None:
-                    event.patient_class = patient_class
+                    event.patient_class = normalize_patient_class(
+                        patient_class,
+                        event_type=event.event_type,
+                    )
+                else:
+                    event.patient_class = normalize_patient_class(
+                        event.patient_class,
+                        event_type=event.event_type,
+                    )
                 if principal_dx is not None:
                     event.principal_diagnosis = principal_dx
+                if admitting_dx is not None:
+                    event.admitting_diagnosis = admitting_dx
                 if serialized_codes is not None:
                     event.diagnosis_codes = serialized_codes
                 events.append(event)
@@ -217,6 +251,15 @@ class CanonicalizeStage(PipelineStage):
         for record in records:
             event = mapper.map_record(record, source_name, batch_id)
             resolver.resolve(event, record)
+            event.event_id = generate_event_id(
+                source_system=event.source_system,
+                source_record_id=event.source_record_id,
+                event_type=event.event_type,
+            )
             auth_mapper.apply(event, record)
+            event.patient_class = normalize_patient_class(
+                event.patient_class,
+                event_type=event.event_type,
+            )
             events.append(event)
         return events

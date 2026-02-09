@@ -11,7 +11,7 @@ ASRE (Admission Signal Reliability Engine) is a healthcare data reliability laye
 - **Language:** Python 3.11+
 - **Transformation:** dbt-core with warehouse-specific adapters (Snowflake, BigQuery, Redshift)
 - **Config validation:** Pydantic
-- **Facility matching:** rapidfuzz, recordlinkage
+- **Facility matching:** rapidfuzz
 - **Container:** Docker (ECS / Cloud Run compatible)
 - **Config format:** YAML with `${ENV_VAR}` substitution for secrets
 

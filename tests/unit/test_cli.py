@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -139,12 +139,72 @@ class TestValidateConfig:
 class TestTestConnection:
     """Tests for the test-connection command."""
 
-    def test_test_connection_placeholder(self) -> None:
-        """test-connection prints 'not yet implemented'."""
+    def test_test_connection_requires_config_path(self) -> None:
+        """test-connection requires --config-path option."""
         runner = CliRunner()
         result = runner.invoke(cli, ["test-connection"])
+        assert result.exit_code != 0
+
+    def test_test_connection_requires_customer_id(self, tmp_path: Path) -> None:
+        """test-connection requires --customer-id option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "test-connection",
+            "--config-path", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+
+    @patch("asre.cli.main._get_diagnostic_adapter")
+    def test_test_connection_success(self, mock_get_adapter: MagicMock) -> None:
+        """Successful connection prints success message."""
+        mock_adapter = MagicMock()
+        mock_adapter.read_source.return_value = [{"connected": 1}]
+        mock_get_adapter.return_value = mock_adapter
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "test-connection",
+            "--config-path", "/some/path",
+            "--customer-id", "test_cust",
+        ])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "Connection successful." in result.output
+        mock_get_adapter.assert_called_once_with("/some/path", "test_cust")
+        mock_adapter.read_source.assert_called_once_with(
+            "test", "SELECT 1 AS connected"
+        )
+        mock_adapter.disconnect.assert_called_once()
+
+    @patch("asre.cli.main._get_diagnostic_adapter")
+    def test_test_connection_failure(self, mock_get_adapter: MagicMock) -> None:
+        """Failed connection prints failure message and exits non-zero."""
+        mock_get_adapter.side_effect = Exception("Connection refused")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "test-connection",
+            "--config-path", "/some/path",
+            "--customer-id", "test_cust",
+        ])
+        assert result.exit_code != 0
+        assert "Connection failed: Connection refused" in result.output
+
+    @patch("asre.cli.main._get_diagnostic_adapter")
+    def test_test_connection_query_failure(self, mock_get_adapter: MagicMock) -> None:
+        """Query failure after connect still disconnects and reports failure."""
+        mock_adapter = MagicMock()
+        mock_adapter.read_source.side_effect = Exception("query error")
+        mock_get_adapter.return_value = mock_adapter
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "test-connection",
+            "--config-path", "/some/path",
+            "--customer-id", "test_cust",
+        ])
+        assert result.exit_code != 0
+        assert "Connection failed: query error" in result.output
+        mock_adapter.disconnect.assert_called_once()
 
     def test_test_connection_in_help(self) -> None:
         """test-connection appears in help output."""

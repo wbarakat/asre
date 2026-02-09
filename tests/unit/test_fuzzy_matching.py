@@ -93,6 +93,12 @@ class TestFuzzyMatchScore:
         if result_strict is None:
             assert result_lenient is not None
 
+    def test_threshold_zero_disables_fuzzy_matching(self) -> None:
+        """Threshold <= 0 should disable fuzzy matching entirely."""
+        matcher = _build_matcher(fuzzy_threshold=0.0)
+        result = matcher.match_fuzzy("ST MARYS EAST")
+        assert result is None
+
 
 class TestFuzzyMatchSelection:
     """When multiple facilities could match, select the best one."""

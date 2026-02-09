@@ -6,10 +6,13 @@ can be resumed from the last completed stage.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from asre.ingest.base import IngestAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointManager:
@@ -53,20 +56,20 @@ class CheckpointManager:
             "error": None,
             "updated_at": now,
         }
-        self._adapter.write_records(self._TABLE, [record])
+        self._upsert_record(record)
 
-    def mark_completed(self, run_id: str) -> None:
+    def mark_completed(self, run_id: str, stage_name: str, stage_index: int) -> None:
         """Mark a run as fully completed."""
         now = datetime.now(tz=timezone.utc).isoformat()
         record: dict[str, Any] = {
             "run_id": run_id,
-            "last_completed_stage": "quality_check",
-            "stage_index": 8,
+            "last_completed_stage": stage_name,
+            "stage_index": stage_index,
             "status": "completed",
             "error": None,
             "updated_at": now,
         }
-        self._adapter.write_records(self._TABLE, [record])
+        self._upsert_record(record)
 
     def mark_failed(
         self,
@@ -85,7 +88,75 @@ class CheckpointManager:
             "error": error,
             "updated_at": now,
         }
-        self._adapter.write_records(self._TABLE, [record])
+        self._upsert_record(record)
+
+    def _upsert_record(self, record: dict[str, Any]) -> None:
+        """Upsert a checkpoint record using warehouse-appropriate SQL."""
+        wt = getattr(self._adapter, "warehouse_type", "postgres")
+
+        cols = [
+            "run_id",
+            "last_completed_stage",
+            "stage_index",
+            "status",
+            "error",
+            "updated_at",
+        ]
+        values = {col: record.get(col) for col in cols}
+
+        def _sql_value(value: Any) -> str:
+            if value is None:
+                return "NULL"
+            if isinstance(value, (int, float)):
+                return str(value)
+            text = str(value).replace("'", "''")
+            return f"'{text}'"
+
+        if wt == "redshift":
+            self._adapter.execute_ddl(
+                f"DELETE FROM {self._TABLE} WHERE run_id = {_sql_value(values['run_id'])}"
+            )
+            columns = ", ".join(cols)
+            vals = ", ".join(_sql_value(values[col]) for col in cols)
+            self._adapter.execute_ddl(
+                f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals})"
+            )
+            return
+
+        if wt in ("snowflake", "bigquery"):
+            source_cols = ", ".join(
+                f"{_sql_value(values[col])} AS {col}" for col in cols
+            )
+            merge_sql = (
+                f"MERGE INTO {self._TABLE} AS target "
+                f"USING (SELECT {source_cols}) AS source "
+                "ON target.run_id = source.run_id "
+                "WHEN MATCHED THEN UPDATE SET "
+                "last_completed_stage = source.last_completed_stage, "
+                "stage_index = source.stage_index, "
+                "status = source.status, "
+                "error = source.error, "
+                "updated_at = source.updated_at "
+                "WHEN NOT MATCHED THEN INSERT "
+                "(run_id, last_completed_stage, stage_index, status, error, updated_at) "
+                "VALUES (source.run_id, source.last_completed_stage, source.stage_index, "
+                "source.status, source.error, source.updated_at)"
+            )
+            self._adapter.execute_ddl(merge_sql)
+            return
+
+        # Postgres (default)
+        columns = ", ".join(cols)
+        vals = ", ".join(_sql_value(values[col]) for col in cols)
+        updates = ", ".join(
+            f"{col} = EXCLUDED.{col}" for col in cols if col != "run_id"
+        )
+        sql = (
+            f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals}) "
+            "ON CONFLICT (run_id) DO UPDATE SET "
+            f"{updates}"
+        )
+        self._adapter.execute_ddl(sql)
 
     def load_checkpoint(self, run_id: str) -> dict[str, Any] | None:
         """Load checkpoint state for a given run_id.
@@ -98,6 +169,7 @@ class CheckpointManager:
                 f"SELECT * FROM {self._TABLE} WHERE run_id = '{run_id}'",
             )
         except Exception:
+            logger.debug("Could not load checkpoint for run_id=%s (table may not exist)", run_id)
             return None
 
         if not rows:

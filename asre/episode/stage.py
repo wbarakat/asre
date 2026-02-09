@@ -15,6 +15,7 @@ from typing import Any
 
 from asre.episode.episode_stitcher import EpisodeStitcher
 from asre.episode.metadata_builder import EpisodeMetadataBuilder
+from asre.materialize.stage import ASRE_VERSION
 from asre.models.batch import EventBatch
 from asre.models.encounter import Encounter
 from asre.models.episode import Episode
@@ -121,7 +122,7 @@ def scored_encounter_to_encounter(enc: Any) -> Encounter:
         confidence_flags=enc.confidence_flags,
         created_at=now,
         updated_at=now,
-        asre_version="0.1.0",
+        asre_version=ASRE_VERSION,
         drg=drg,
         payer_id=payer_id,
         principal_diagnosis=principal_diagnosis,
@@ -186,7 +187,7 @@ def record_to_encounter(record: dict[str, Any]) -> Encounter:
         confidence_flags=_parse_json_field(record.get("confidence_flags")) or [],
         created_at=_parse_datetime(record.get("created_at")) or datetime.now(tz=timezone.utc),
         updated_at=_parse_datetime(record.get("updated_at")) or datetime.now(tz=timezone.utc),
-        asre_version=record.get("asre_version", "0.1.0"),
+        asre_version=record.get("asre_version", ASRE_VERSION),
         admit_source_priority=record.get("admit_source_priority"),
         discharge_source_priority=record.get("discharge_source_priority"),
         payer_id=record.get("payer_id"),
@@ -442,6 +443,7 @@ class EpisodeMaterializeStage(PipelineStage):
                 row["episode_id"]: row["created_at"] for row in rows
             }
         except Exception:
+            logger.debug("Could not load existing episode IDs (table may not exist yet)")
             return {}
 
     @staticmethod
@@ -457,7 +459,7 @@ class EpisodeMaterializeStage(PipelineStage):
                 )
                 adapter._connection.commit()
         except Exception:
-            pass
+            logger.debug("Failed to delete episode %s (may not exist yet)", episode_id)
 
 
 class EpisodeQualityStage(PipelineStage):

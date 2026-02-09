@@ -10,7 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from asre.observability.health import HealthCheckServer, PipelineHealthState
+from asre.observability.health import (
+    HealthCheckServer,
+    PipelineHealthState,
+    start_health_check_server,
+)
 
 
 class TestPipelineHealthState:
@@ -153,3 +157,16 @@ class TestHealthCheckServer:
                 assert exc.code == 503
         finally:
             server.shutdown()
+
+    def test_start_health_check_server_runs_in_thread(self) -> None:
+        state = PipelineHealthState()
+        server, thread = start_health_check_server(state=state, port=0)
+        try:
+            assert thread.is_alive()
+            port = server.server_port
+            url = f"http://127.0.0.1:{port}/health"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                assert resp.status == 200
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)

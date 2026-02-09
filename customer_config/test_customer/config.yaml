@@ -5,12 +5,7 @@ customer:
 warehouse:
   type: postgres
   connection:
-    host: "${WAREHOUSE_HOST}"
-    port: "${WAREHOUSE_PORT}"
-    database: "${WAREHOUSE_DATABASE}"
-    user: "${WAREHOUSE_USER}"
-    password: "${WAREHOUSE_PASSWORD}"
-    schema: "${WAREHOUSE_SCHEMA}"
+    require_utf8: false
 
 schedule:
   mode: incremental
@@ -23,6 +18,8 @@ schedule:
 encounter_stitching:
   time_window_hours: 48
   facility_must_match: true
+  use_canonical_history: true
+  history_lookback_days: 90
   patient_class_transitions:
     - from: ed
       to: inpatient
@@ -63,7 +60,10 @@ episode_stitching:
   ed_bounceback_days: 7
 
 facility_normalization:
-  fuzzy_threshold: 0.85
+  fuzzy_threshold: 0.0
+  use_npi_registry: true
+  use_ccn_registry: true
+  registry_path: "data/reference/registry/facility_registry.csv"
   abbreviations:
     MED CTR: MEDICAL CENTER
     MED: MEDICAL

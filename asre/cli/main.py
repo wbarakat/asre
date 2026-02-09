@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -12,16 +13,78 @@ from asre.config.env_validator import validate_env_vars
 from asre.config.loader import load_config
 
 
-def _check_env_or_exit() -> None:
+def _check_env_or_exit(
+    *,
+    overrides: dict[str, str] | None = None,
+    require_warehouse: bool = True,
+) -> None:
     """Validate required environment variables and exit if any are missing.
 
     This runs before any pipeline work to give operators a clear,
     actionable error message.
     """
-    result = validate_env_vars()
+    result = validate_env_vars(
+        overrides=overrides,
+        require_warehouse=require_warehouse,
+    )
     if not result.is_valid:
         click.echo(f"Error: {result.error_message()}", err=True)
         sys.exit(1)
+
+
+def _validate_license_or_exit() -> None:
+    """Validate the ASRE license key and exit if invalid.
+
+    Reads ASRE_LICENSE_KEY and ASRE_CUSTOMER_ID from environment.
+    Called before pipeline operations but NOT for diagnostic commands.
+    """
+    from asre.license.validator import validate_license_key
+
+    license_key = os.environ.get("ASRE_LICENSE_KEY", "").strip()
+    if not license_key:
+        click.echo(
+            "Error: ASRE_LICENSE_KEY environment variable is required. "
+            "Set it to your signed license key JWT.",
+            err=True,
+        )
+        sys.exit(1)
+
+    customer_id = os.environ.get("ASRE_CUSTOMER_ID", "").strip()
+    if not customer_id:
+        click.echo(
+            "Error: ASRE_CUSTOMER_ID environment variable is required for license validation.",
+            err=True,
+        )
+        sys.exit(1)
+
+    result = validate_license_key(license_key, customer_id)
+    if not result.valid:
+        click.echo(f"Error: License validation failed: {result.error}", err=True)
+        sys.exit(1)
+
+
+def _start_health_server() -> tuple[Any, Any, Any]:
+    """Start the health check server in a background thread."""
+    from asre.observability.health import (
+        PipelineHealthState,
+        start_health_check_server,
+    )
+
+    port_raw = os.environ.get("ASRE_HEALTH_PORT", "8080")
+    try:
+        port = int(port_raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid ASRE_HEALTH_PORT '{port_raw}'") from exc
+
+    bind_address = os.environ.get("ASRE_HEALTH_BIND", "127.0.0.1")
+
+    state = PipelineHealthState()
+    server, thread = start_health_check_server(
+        state=state,
+        port=port,
+        bind_address=bind_address,
+    )
+    return server, thread, state
 
 
 def _run_auto_migration(adapter: Any) -> None:
@@ -71,10 +134,10 @@ def _get_facility_adapter(config_path: str, customer_id: str) -> Any:
     Returns:
         Connected IngestAdapter instance.
     """
-    from asre.ingest.postgres import PostgresAdapter
+    from asre.ingest.adapter_factory import create_adapter
 
     config = load_config(config_path, customer_id)
-    adapter = PostgresAdapter(config.warehouse.connection)
+    adapter = create_adapter(config.warehouse.type, config.warehouse.connection)
     adapter.connect()
     return adapter
 
@@ -126,6 +189,7 @@ def _create_pipeline_runner(
     customer_id: str,
     mode: str,
     dry_run: bool = False,
+    health_state: Any | None = None,
 ) -> Any:
     """Create a PipelineRunner from customer config.
 
@@ -137,32 +201,19 @@ def _create_pipeline_runner(
     Returns:
         Configured PipelineRunner instance.
     """
-    from asre.ingest.postgres import PostgresAdapter
+    from asre.config.pipeline_config_builder import build_pipeline_config
+    from asre.ingest.adapter_factory import create_adapter
     from asre.pipeline.runner import PipelineRunner
 
     global_config = load_config(config_path, customer_id)
 
-    pipeline_config: dict[str, Any] = {}
-    pipeline_config["customer"] = {
-        "customer_id": global_config.customer.customer_id,
-        "customer_name": global_config.customer.customer_name,
-    }
-    pipeline_config["sources"] = global_config.sources
-    pipeline_config["facility_aliases"] = global_config.facility_aliases
-
-    if hasattr(global_config, "encounter_stitching"):
-        pipeline_config["encounter_stitching"] = global_config.encounter_stitching
-    if hasattr(global_config, "deduplication"):
-        pipeline_config["deduplication"] = global_config.deduplication
-    if hasattr(global_config, "reconciliation"):
-        pipeline_config["reconciliation"] = global_config.reconciliation
-    if hasattr(global_config, "confidence_scoring"):
-        pipeline_config["confidence_scoring"] = global_config.confidence_scoring
-    if hasattr(global_config, "facility_normalization"):
-        pipeline_config["facility_normalization"] = global_config.facility_normalization
+    pipeline_config = build_pipeline_config(global_config)
 
     # Connect adapter for database operations
-    adapter = PostgresAdapter(global_config.warehouse.connection)
+    adapter = create_adapter(
+        global_config.warehouse.type,
+        global_config.warehouse.connection,
+    )
     adapter.connect()
     pipeline_config["adapter"] = adapter
 
@@ -171,6 +222,8 @@ def _create_pipeline_runner(
 
     if dry_run:
         pipeline_config["dry_run"] = True
+    if health_state is not None:
+        pipeline_config["health_state"] = health_state
 
     return PipelineRunner(config=pipeline_config, mode=mode)
 
@@ -216,13 +269,25 @@ def run_pipeline(
     customer_id: str,
 ) -> None:
     """Run the ASRE pipeline."""
-    _check_env_or_exit()
+    _check_env_or_exit(
+        overrides={
+            "ASRE_CONFIG_PATH": config_path,
+            "ASRE_CUSTOMER_ID": customer_id,
+        },
+        require_warehouse=False,
+    )
+    _validate_license_or_exit()
+    server = None
+    thread = None
+    health_state = None
     try:
+        server, thread, health_state = _start_health_server()
         runner = _create_pipeline_runner(
             config_path=config_path,
             customer_id=customer_id,
             mode=mode,
             dry_run=dry_run,
+            health_state=health_state,
         )
         result: dict[str, Any] = runner.run(resume_run_id=resume_run_id)
         click.echo(
@@ -231,17 +296,47 @@ def run_pipeline(
             f"stages_completed={result['stages_completed']}"
         )
     except ValueError as exc:
+        if health_state is not None:
+            health_state.mark_failed(str(exc))
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     except Exception as exc:
+        if health_state is not None:
+            health_state.mark_failed(str(exc))
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+    finally:
+        if server is not None:
+            server.shutdown()
+        if thread is not None:
+            thread.join(timeout=2)
 
 
 @cli.command("test-connection")
-def test_connection() -> None:
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+def test_connection(config_path: str, customer_id: str) -> None:
     """Test warehouse connectivity."""
-    click.echo("Not yet implemented.")
+    try:
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            adapter.read_source("test", "SELECT 1 AS connected")
+            click.echo("Connection successful.")
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Connection failed: {exc}", err=True)
+        sys.exit(1)
 
 
 def _get_diagnostic_adapter(config_path: str, customer_id: str) -> Any:
@@ -254,10 +349,10 @@ def _get_diagnostic_adapter(config_path: str, customer_id: str) -> Any:
     Returns:
         Connected IngestAdapter instance.
     """
-    from asre.ingest.postgres import PostgresAdapter
+    from asre.ingest.adapter_factory import create_adapter
 
     config = load_config(config_path, customer_id)
-    adapter = PostgresAdapter(config.warehouse.connection)
+    adapter = create_adapter(config.warehouse.type, config.warehouse.connection)
     adapter.connect()
     return adapter
 
@@ -550,6 +645,7 @@ def _recompute_episodes(config_path: str, customer_id: str) -> None:
     ingest, canonicalize, stitch, dedup, reconcile, or score.
     """
     try:
+        _validate_license_or_exit()
         adapter = _get_diagnostic_adapter(config_path, customer_id)
         try:
             # Read all encounters from admission_events_unified
@@ -709,6 +805,7 @@ def facilities_resolve(ctx: click.Context, facility_id: str, target: str) -> Non
     config_path: str = ctx.obj["config_path"]
     customer_id: str = ctx.obj["customer_id"]
     try:
+        _validate_license_or_exit()
         adapter = _get_facility_adapter(config_path, customer_id)
         try:
             # Verify source facility exists
@@ -731,6 +828,33 @@ def facilities_resolve(ctx: click.Context, facility_id: str, target: str) -> Non
                 click.echo(f"Error: Target facility {target} not found.", err=True)
                 sys.exit(1)
 
+            # Add source's canonical_name as alias on the target
+            source_name: str = source_records[0]["canonical_name"]
+            raw_aliases = target_records[0].get("aliases", "[]")
+            target_aliases: list[str] = (
+                json.loads(raw_aliases) if isinstance(raw_aliases, str) else raw_aliases
+            )
+            if source_name not in target_aliases:
+                target_aliases.append(source_name)
+                adapter.execute_dml(
+                    "UPDATE asre_facility_registry SET aliases = :aliases "
+                    "WHERE canonical_id = :cid",
+                    {"aliases": json.dumps(target_aliases), "cid": target},
+                )
+
+            # Delete the source facility record
+            adapter.execute_dml(
+                "DELETE FROM asre_facility_registry WHERE canonical_id = :fid",
+                {"fid": facility_id},
+            )
+
+            # Repoint encounters from old facility to target
+            adapter.execute_dml(
+                "UPDATE admission_events_unified SET facility_canonical_id = :target_id "
+                "WHERE facility_canonical_id = :source_id",
+                {"target_id": target, "source_id": facility_id},
+            )
+
             click.echo(
                 f"Mapped {facility_id} -> {target} "
                 f"(target: {target_records[0]['canonical_name']})"
@@ -739,6 +863,143 @@ def facilities_resolve(ctx: click.Context, facility_id: str, target: str) -> Non
             adapter.disconnect()
     except SystemExit:
         raise
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.command("migrate")
+@click.option(
+    "--config-path",
+    envvar="ASRE_CONFIG_PATH",
+    required=True,
+    help="Root config directory path.",
+)
+@click.option(
+    "--customer-id",
+    envvar="ASRE_CUSTOMER_ID",
+    required=True,
+    help="Customer subdirectory name.",
+)
+@click.option(
+    "--rollback",
+    "rollback_version",
+    type=int,
+    default=None,
+    help="Rollback migrations to this version (0 = rollback all).",
+)
+def migrate(config_path: str, customer_id: str, rollback_version: int | None) -> None:
+    """Run or rollback database migrations."""
+    try:
+        _validate_license_or_exit()
+        adapter = _get_diagnostic_adapter(config_path, customer_id)
+        try:
+            from asre.migration.migrator import Migrator
+
+            migrator = Migrator(adapter)
+
+            if rollback_version is not None:
+                result = migrator.rollback(rollback_version)
+                click.echo(
+                    f"Rollback complete: reverted {result.applied} migration(s), "
+                    f"schema version now {result.current_version}."
+                )
+            else:
+                result = migrator.run()
+                click.echo(
+                    f"Migrations complete: applied {result.applied}, "
+                    f"schema version now {result.current_version}."
+                )
+        finally:
+            adapter.disconnect()
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.command("build-registry")
+@click.option(
+    "--nppes",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to NPPES organization extract CSV.",
+)
+@click.option(
+    "--othernames",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to NPPES other-names extract CSV.",
+)
+@click.option(
+    "--pos-hospital",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to CMS POS hospital CSV.",
+)
+@click.option(
+    "--pos-iqies",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to CMS POS iQIES CSV.",
+)
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(),
+    help="Output path for SQLite database file.",
+)
+@click.option(
+    "--limit",
+    default=None,
+    type=int,
+    help="Limit rows per source (for testing).",
+)
+def build_registry(
+    nppes: str,
+    othernames: str | None,
+    pos_hospital: str | None,
+    pos_iqies: str | None,
+    output: str,
+    limit: int | None,
+) -> None:
+    """Build SQLite facility registry from NPPES + CMS POS sources.
+
+    Combines NPPES organization NPIs and CMS POS CCNs into a single
+    SQLite database for NPI/CCN lookup during facility matching.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from asre.facility.registry_builder import build_combined_registry
+    from asre.facility.sqlite_registry import build_sqlite_from_csv
+
+    try:
+        # Step 1: Build intermediate CSV in a temp file
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False
+        ) as tmp:
+            tmp_csv = Path(tmp.name)
+
+        click.echo("Building combined registry CSV ...")
+        build_combined_registry(
+            nppes_path=Path(nppes),
+            othername_path=Path(othernames) if othernames else None,
+            pos_hospital_path=Path(pos_hospital) if pos_hospital else None,
+            pos_iqies_path=Path(pos_iqies) if pos_iqies else None,
+            output_path=tmp_csv,
+            limit=limit,
+        )
+
+        # Step 2: Convert CSV to SQLite
+        click.echo("Converting to SQLite ...")
+        count = build_sqlite_from_csv(tmp_csv, output)
+
+        db_path = Path(output)
+        size_mb = db_path.stat().st_size / (1024 * 1024)
+        click.echo(f"Registry built: {count:,} rows, {size_mb:.1f} MB at {output}")
+
+        # Clean up temp file
+        tmp_csv.unlink(missing_ok=True)
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

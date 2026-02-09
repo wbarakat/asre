@@ -40,6 +40,12 @@ RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 COPY --chown=asre:asre dbt_project/ /app/dbt_project/
 COPY --chown=asre:asre customer_config/ /app/customer_config/
 
+# License public key (embedded at build time by CI; glob pattern is a no-op if file absent)
+COPY --chown=asre:asre asre/license/public_key.pe[m] /app/asre/license/
+
+# Bundled NPI/CCN facility registry (SQLite; glob pattern is a no-op if file absent)
+COPY --chown=asre:asre asre/data/facility_registry.d[b] /app/asre/data/
+
 # Switch to non-root user
 USER asre
 

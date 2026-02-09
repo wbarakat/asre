@@ -8,6 +8,7 @@ from typing import Any
 
 from asre.config.source_schema import FieldMappings
 from asre.models.canonical_event import CanonicalEvent
+from asre.canonicalize.timestamp_parser import parse_event_ts
 
 
 class FieldMapper:
@@ -61,6 +62,8 @@ class FieldMapper:
         payer_id = self._get_optional(record, fm.payer_id)
         drg = self._get_optional(record, fm.drg)
         principal_diagnosis = self._get_optional(record, fm.principal_diagnosis)
+        npi = self._get_optional(record, fm.npi)
+        ccn = self._get_optional(record, fm.ccn)
 
         return CanonicalEvent(
             event_id=str(uuid.uuid4()),
@@ -76,15 +79,15 @@ class FieldMapper:
             payer_id=payer_id,
             drg=drg,
             principal_diagnosis=principal_diagnosis,
+            npi=npi,
+            ccn=ccn,
             _raw_payload=record.get("_raw_payload"),
         )
 
     @staticmethod
     def _parse_event_ts(value: Any) -> datetime:
         """Parse event_ts from string or pass through datetime."""
-        if isinstance(value, datetime):
-            return value
-        return datetime.fromisoformat(str(value))
+        return parse_event_ts(value)
 
     @staticmethod
     def _get_optional(record: dict[str, Any], mapping_field: str | None) -> str | None:

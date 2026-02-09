@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -19,12 +20,16 @@ CUSTOMER_ID = "test_customer"
 @pytest.fixture(autouse=True)
 def _set_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set placeholder env vars that the example config might reference."""
-    monkeypatch.setenv("WAREHOUSE_HOST", "localhost")
-    monkeypatch.setenv("WAREHOUSE_PORT", "5432")
-    monkeypatch.setenv("WAREHOUSE_DATABASE", "asre_test")
-    monkeypatch.setenv("WAREHOUSE_USER", "asre_user")
-    monkeypatch.setenv("WAREHOUSE_PASSWORD", "secret_password")
-    monkeypatch.setenv("WAREHOUSE_SCHEMA", "public")
+    creds = {
+        "host": "localhost",
+        "port": 5432,
+        "database": "asre_test",
+        "user": "asre_user",
+        "password": "secret_password",
+        "schema": "public",
+    }
+    monkeypatch.setenv("ASRE_WAREHOUSE_TYPE", "postgres")
+    monkeypatch.setenv("ASRE_WAREHOUSE_CREDENTIALS", json.dumps(creds))
     monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/alert")
 
 

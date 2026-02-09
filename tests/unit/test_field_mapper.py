@@ -21,6 +21,7 @@ def _adt_field_mappings() -> FieldMappings:
         facility_raw="sending_facility",
         patient_class="patient_class",
         npi="facility_npi",
+        ccn="facility_ccn",
     )
 
 
@@ -33,6 +34,7 @@ def _sample_adt_record() -> dict[str, Any]:
         "sending_facility": "St. Mary's Medical Center",
         "patient_class": "I",
         "facility_npi": "1234567890",
+        "facility_ccn": "010001",
         "hl7_event": "A01",
         "_source_name": "adt_vendor_x",
         "_source_type": "adt",
@@ -73,6 +75,19 @@ class TestFieldMapperMapping:
         assert event.source_system == "adt_vendor_x"
         assert event.batch_id == "batch_001"
 
+    def test_maps_npi_and_ccn_fields(self) -> None:
+        mapper = FieldMapper(_adt_field_mappings())
+        record = _sample_adt_record()
+
+        event = mapper.map_record(
+            record=record,
+            source_system="adt_vendor_x",
+            batch_id="batch_001",
+        )
+
+        assert event.npi == "1234567890"
+        assert event.ccn == "010001"
+
     def test_maps_event_ts_as_datetime(self) -> None:
         mapper = FieldMapper(_adt_field_mappings())
         record = _sample_adt_record()
@@ -87,6 +102,7 @@ class TestFieldMapperMapping:
         assert event.event_ts.year == 2024
         assert event.event_ts.month == 1
         assert event.event_ts.day == 15
+        assert event.event_ts.tzinfo == timezone.utc
 
     def test_handles_datetime_object_in_event_ts(self) -> None:
         """event_ts might already be a datetime from the adapter."""
@@ -102,6 +118,7 @@ class TestFieldMapperMapping:
 
         assert isinstance(event.event_ts, datetime)
         assert event.event_ts.year == 2024
+        assert event.event_ts.tzinfo == timezone.utc
 
     def test_generates_uuid_event_id(self) -> None:
         mapper = FieldMapper(_adt_field_mappings())

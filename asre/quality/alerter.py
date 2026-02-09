@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import URLError
@@ -19,8 +20,11 @@ logger = logging.getLogger(__name__)
 # Timeout for each webhook HTTP request (seconds).
 _WEBHOOK_TIMEOUT_SECONDS = 5
 
-# Number of retry attempts on network failure.
-_WEBHOOK_RETRIES = 1
+# Default number of retry attempts on network failure.
+_DEFAULT_WEBHOOK_RETRIES = 3
+
+# Base delay for exponential backoff (seconds).
+_BACKOFF_BASE_SECONDS = 1.0
 
 
 class Alerter:
@@ -28,10 +32,19 @@ class Alerter:
 
     Args:
         webhook_urls: List of HTTP(S) endpoint URLs to POST alerts to.
+        max_retries: Maximum number of retry attempts per URL (default 3).
+        backoff_base: Base delay in seconds for exponential backoff (default 1.0).
     """
 
-    def __init__(self, webhook_urls: list[str]) -> None:
+    def __init__(
+        self,
+        webhook_urls: list[str],
+        max_retries: int | None = None,
+        backoff_base: float | None = None,
+    ) -> None:
         self._webhook_urls = webhook_urls
+        self._max_retries = max_retries if max_retries is not None else _DEFAULT_WEBHOOK_RETRIES
+        self._backoff_base = backoff_base if backoff_base is not None else _BACKOFF_BASE_SECONDS
 
     def build_payload(
         self,
@@ -130,11 +143,12 @@ class Alerter:
     # ------------------------------------------------------------------
 
     def _post(self, url: str, body: bytes) -> bool:
-        """POST *body* to *url* with retries.
+        """POST *body* to *url* with retries and exponential backoff.
 
         Returns ``True`` on a 2xx response, ``False`` otherwise.
         """
-        for attempt in range(_WEBHOOK_RETRIES + 1):
+        total_attempts = self._max_retries + 1
+        for attempt in range(total_attempts):
             try:
                 req = Request(
                     url,
@@ -155,16 +169,21 @@ class Alerter:
                         url,
                         resp.status,
                         attempt + 1,
-                        _WEBHOOK_RETRIES + 1,
+                        total_attempts,
                     )
             except (URLError, OSError, TimeoutError) as exc:
                 logger.warning(
                     "Webhook delivery to %s failed (attempt %d/%d): %s",
                     url,
                     attempt + 1,
-                    _WEBHOOK_RETRIES + 1,
+                    total_attempts,
                     exc,
                 )
+
+            # Exponential backoff before next retry (skip after last attempt)
+            if attempt < self._max_retries:
+                delay = self._backoff_base * (2 ** attempt)
+                time.sleep(delay)
 
         logger.error("All webhook delivery attempts to %s exhausted.", url)
         return False

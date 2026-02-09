@@ -164,19 +164,28 @@ class QualityMetricComputer:
                 each record includes a ``status`` field.
 
         Returns:
-            List of dicts, one per metric, with run_id, metric_name,
-            metric_value, computed_at, and optionally status fields.
+            List of dicts, one per metric, with metric_id, run_id,
+            metric_name, metric_value, run_ts, status, and detail fields.
         """
+        import uuid
+
         now = datetime.now(tz=timezone.utc).isoformat()
         records: list[dict[str, Any]] = []
         for name, value in metrics.items():
+            status = "pass"
+            if statuses is not None:
+                status = statuses.get(name, "pass")
+            detail: str | None = None
+            if status in ("warn", "fail"):
+                detail = f"{name}={value:.4f} is {status}"
             record: dict[str, Any] = {
+                "metric_id": str(uuid.uuid4()),
                 "run_id": run_id,
                 "metric_name": name,
                 "metric_value": value,
-                "computed_at": now,
+                "run_ts": now,
+                "status": status,
+                "detail": detail,
             }
-            if statuses is not None:
-                record["status"] = statuses.get(name, "pass")
             records.append(record)
         return records

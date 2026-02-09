@@ -46,6 +46,7 @@ def _make_context(
     encounters: list[Any] | None = None,
     encounters_created: int = 0,
     encounters_updated: int = 0,
+    block_on_statuses: list[str] | None = None,
 ) -> PipelineContext:
     """Build a PipelineContext with quality-check-relevant config."""
     config: dict[str, Any] = {}
@@ -59,6 +60,7 @@ def _make_context(
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.15,
             },
+            "block_on_statuses": block_on_statuses or [],
         }
 
     if adapter is not None:
@@ -190,6 +192,7 @@ class TestQualityCheckStageThresholds:
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.15,
             },
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting)
         stage = QualityCheckStage()
@@ -214,6 +217,7 @@ class TestQualityCheckStageThresholds:
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.60,
             },
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting)
         stage = QualityCheckStage()
@@ -237,6 +241,7 @@ class TestQualityCheckStageThresholds:
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.15,
             },
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting)
         stage = QualityCheckStage()
@@ -245,6 +250,33 @@ class TestQualityCheckStageThresholds:
         stage.run(batch, ctx)
 
         assert stage.metric_statuses["duplicate_rate"] == "fail"
+
+    def test_quality_gate_raises_on_fail_status(self) -> None:
+        from asre.quality.errors import QualityGateError
+        from asre.quality.stage import QualityCheckStage
+
+        encounters = [
+            _FakeEncounter(confidence_flags=["DUPLICATE_DETECTED"]),
+        ]
+        alerting = {
+            "webhook_urls": [],
+            "thresholds": {
+                "duplicate_rate_warn": 0.05,
+                "duplicate_rate_fail": 0.15,
+            },
+            "block_on_statuses": ["fail"],
+        }
+        adapter = MagicMock()
+        adapter.write_records.return_value = 12
+        ctx = _make_context(encounters=encounters, alerting_config=alerting, adapter=adapter)
+        stage = QualityCheckStage()
+        batch = EventBatch(batch_id="test", events=[])
+
+        with pytest.raises(QualityGateError):
+            stage.run(batch, ctx)
+
+        adapter.write_records.assert_called_once()
+        adapter.set_watermark.assert_not_called()
 
 
 # ===================================================================
@@ -266,6 +298,7 @@ class TestQualityCheckStageAlerting:
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.15,
             },
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting)
         stage = QualityCheckStage()
@@ -293,6 +326,7 @@ class TestQualityCheckStageAlerting:
                 "duplicate_rate_warn": 0.05,
                 "duplicate_rate_fail": 0.15,
             },
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting)
         stage = QualityCheckStage()
@@ -315,6 +349,7 @@ class TestQualityCheckStageAlerting:
         alerting_cfg: dict[str, Any] = {
             "webhook_urls": [],
             "thresholds": {},
+            "block_on_statuses": [],
         }
         ctx = _make_context(encounters=encounters, alerting_config=alerting_cfg)
         stage = QualityCheckStage()
@@ -378,8 +413,8 @@ class TestQualityCheckStageWriteMetrics:
 
         stage.run(batch, ctx)
 
-        adapter.execute_ddl.assert_called_once()
-        ddl_arg = adapter.execute_ddl.call_args[0][0]
+        assert adapter.execute_ddl.call_count >= 1
+        ddl_arg = adapter.execute_ddl.call_args_list[0][0][0]
         assert "asre_quality_metrics" in ddl_arg
         assert "CREATE TABLE IF NOT EXISTS" in ddl_arg
 
@@ -393,6 +428,7 @@ class TestQualityCheckStageWatermark:
 
     def test_updates_watermark_when_adapter_present(self) -> None:
         from asre.quality.stage import QualityCheckStage
+        from datetime import datetime
 
         adapter = MagicMock()
         adapter.write_records.return_value = 12
@@ -407,6 +443,7 @@ class TestQualityCheckStageWatermark:
         adapter.set_watermark.assert_called_once()
         args = adapter.set_watermark.call_args[0]
         assert args[0] == "quality_check"  # source_name
+        assert isinstance(args[1], datetime)
 
 
 # ===================================================================

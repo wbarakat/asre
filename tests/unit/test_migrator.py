@@ -107,14 +107,16 @@ class TestMigrationExecution:
     def test_run_skips_already_applied(self) -> None:
         """Migrations with version <= current schema_version are skipped."""
         adapter = MagicMock()
-        # Schema version already at highest migration version
-        adapter.read_source.return_value = [{"value": "4"}]
         migrator = Migrator(adapter)
+        latest_version = max((m.version for m in migrator.discover_migrations()), default=0)
+        # Schema version already at highest migration version
+        adapter.read_source.return_value = [{"value": str(latest_version)}]
 
         result = migrator.run()
 
         # No DDL should be executed for migrations (only the version query)
         assert result.applied == 0
+        assert result.current_version == latest_version
 
     def test_run_applies_pending_migrations(self) -> None:
         """Migrations with version > current schema_version are applied."""

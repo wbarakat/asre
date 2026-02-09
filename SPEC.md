@@ -75,7 +75,7 @@ ASRE does **not** run analytics, predict outcomes, automate billing, or replace 
 | Configuration | YAML |
 | Container runtime | Docker (AWS ECS / GCP Cloud Run compatible) |
 | Warehouse targets | Snowflake, BigQuery, Redshift (all three supported from v1) |
-| Facility matching | Python (rapidfuzz, recordlinkage) |
+| Facility matching | Python (rapidfuzz) |
 | Condition grouping | AHRQ CCS ICD-10 grouper (public domain) + pluggable interface |
 | Data quality | dbt tests + custom Python checks |
 | Alerting | Webhook (Slack, email, PagerDuty via webhook) |
@@ -609,13 +609,13 @@ Algorithm:
 
 ### 5.6 Encounter ID Stability
 
-`encounter_id` is deterministically derived from the first admit event:
+`encounter_id` is deterministically derived on first creation from the first admit event:
 
 ```
 encounter_id = hash(patient_key + facility_canonical_id + first_admit_source_record_id)
 ```
 
-This ensures `encounter_id` is stable across re-processing runs. The same patient, facility, and originating source record always produce the same encounter ID, regardless of when or how many times the pipeline runs.
+For **incremental runs**, ASRE also reuses existing encounter IDs from recent history when late-arriving data would otherwise change the "first admit" anchor. It does this by matching newly stitched encounters to prior `admission_events_unified` rows for the same patient (and facility, if required) within the configured lookback window (`history_lookback_days`). When a match is found, the prior `encounter_id` is preserved and updated rather than generating a new one.
 
 Edge cases:
 
@@ -1110,6 +1110,7 @@ Contents:
 | `ASRE_LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
 | `ASRE_ALERT_WEBHOOK_URL` | No | Webhook URL for alerts |
 | `ASRE_DRY_RUN` | No | `true` to run pipeline without writing outputs |
+| `ASRE_LICENSE_KEY` | Yes* | Signed JWT license key. Required for `run`, `migrate`, `facilities resolve`, `episodes --recompute`. Not required for diagnostic commands. |
 
 ### 13.3 CLI
 
@@ -1187,34 +1188,43 @@ ASRE does not include its own scheduler. It is designed to be triggered by the c
 
 ### 15.1 Model
 
-ASRE is licensed as an annual subscription with volume tiers. No usage-based metering or telemetry in v1.
+ASRE is licensed as a flat annual subscription. No tiers, no feature gates, no usage-based metering. Price is negotiated per deal based on deployment scope.
 
-| Tier | Volume (encounters/month) | Notes |
-|------|--------------------------|-------|
-| Starter | Up to 50,000 | Single source feed type (e.g., ADT only) |
-| Standard | Up to 250,000 | Multiple source feeds, full reconciliation |
-| Enterprise | 250,000+ | Custom, negotiated |
+- **Billing:** Invoice-based (Mercury / Stripe Invoicing). Net-30 terms.
+- **Renewal:** Annual, with 90-day advance notice for non-renewal.
+- **No telemetry:** ASRE never phones home. All licensing is offline.
 
-Volume is defined as the number of unique encounters in `admission_events_unified` produced per calendar month. Customers can self-report or provide read-only access to `asre_quality_metrics` (which contains `encounters_created` and `encounters_updated` counts per run, no PHI).
+### 15.2 License Key
 
-### 15.2 What's Included
+Each customer receives an offline license key (RSA-256 signed JWT) containing:
 
-- ASRE Docker image (versioned releases)
+| Claim | Type | Description |
+|-------|------|-------------|
+| `customer_id` | string | Must match `ASRE_CUSTOMER_ID` env var |
+| `exp` | integer | Unix timestamp of license expiry |
+| `iat` | integer | Unix timestamp of license issuance |
+
+The key is validated at startup by the `asre/license/validator.py` module:
+1. Verify RS256 signature against embedded public key (`asre/license/public_key.pem`).
+2. Check `exp` claim (reject if expired).
+3. Match `customer_id` claim against `ASRE_CUSTOMER_ID` env var.
+
+License keys are set via `ASRE_LICENSE_KEY` environment variable. Diagnostic commands (`validate-config`, `test-connection`, `status`, `inspect`) do NOT require a license key.
+
+### 15.3 What's Included
+
+- ASRE Docker image (versioned releases via private container registry)
 - Customer config onboarding support
 - Access to updated public registry files (NPI, CCN, HIFLD)
 - AHRQ CCS grouper data files (updated with annual ICD-10 releases)
 - Patch and minor version updates
 
-### 15.3 What's Not Included
+### 15.4 What's Not Included
 
 - Custom adapter development (billed separately or SOW)
 - Custom condition grouper development
 - On-site deployment engineering
 - Warehouse infrastructure costs (customer-owned)
-
-### 15.4 Future: Usage-Based Metering
-
-If usage-based billing is adopted later, it would require a lightweight telemetry component that posts aggregate run metrics (encounter counts, run duration — never PHI) to an ASRE-hosted billing endpoint. This is explicitly out of scope for v1 but the `asre_quality_metrics` table already captures the data needed to support it.
 
 ---
 
@@ -1224,6 +1234,9 @@ If usage-based billing is adopted later, it would require a lightweight telemetr
 asre/
 ├── cli/
 │   └── main.py                  # CLI entry point (core + diagnostic commands)
+├── license/
+│   ├── validator.py              # Offline license key validation (RS256 JWT)
+│   └── public_key.pem            # Embedded RSA public key for license verification
 ├── config/
 │   ├── loader.py                # YAML config loader + validator
 │   └── schema.py                # Pydantic models for config validation
@@ -1380,7 +1393,72 @@ A lightweight FastAPI service running alongside (or within) the ASRE container. 
 
 ---
 
-## 19. Glossary
+## 19. Packaging & Distribution
+
+### 19.1 Container Registry
+
+ASRE is distributed as a Docker image via a private container registry (AWS ECR or GitHub Container Registry).
+
+- **Per-customer pull credentials:** Revocable tokens tied to `customer_id`. Credentials are rotated on renewal.
+- **No public registry:** Images are never published to Docker Hub or other public registries.
+- **Multi-arch:** Images are built for `linux/amd64` and `linux/arm64`.
+
+### 19.2 Versioning
+
+ASRE follows semantic versioning (`MAJOR.MINOR.PATCH`):
+
+| Channel | Tag Pattern | Description |
+|---------|-------------|-------------|
+| `stable` | `v1.2.3`, `stable` | Production-ready releases. Updated on minor/patch versions. |
+| `preview` | `v1.3.0-preview.1`, `preview` | Pre-release builds for validation. Not for production. |
+
+A version manifest (`manifest.json`) is published alongside each release for update detection by customer orchestration tooling.
+
+### 19.3 Offline License Key
+
+License keys are RSA-256 signed JWTs validated entirely offline. There is no license server, no phone-home, and no network dependency for license validation. See Section 15.2 for key format and validation details.
+
+### 19.4 Update Process
+
+1. Customer pulls new image version using registry credentials.
+2. ASRE runs auto-migration on startup (Section 13.1).
+3. No manual schema changes required for minor/patch updates.
+4. Major version upgrades may require config changes (documented in CHANGELOG).
+
+---
+
+## 20. Landing Page & Demo
+
+### 20.1 Site
+
+Static marketing site (Astro or Next.js) deployed on Cloudflare Pages. Domain TBD.
+
+### 20.2 Target Audience
+
+- **Primary (technical):** VP of Data Engineering, Data Platform Architects
+- **Secondary (business):** VP of Revenue Cycle, Director of HIM
+
+### 20.3 Content Blocks
+
+1. **Problem Statement:** "Your ADT feed disagrees with your claims. Your encounter table has duplicates. Your discharge timestamps are wrong."
+2. **How ASRE Works:** Pipeline diagram (ingest → canonicalize → stitch → reconcile → score → output).
+3. **Confidence Scoring:** Visual example of a 0.92 vs 0.34 encounter with signal breakdown.
+4. **Output Tables:** The 5 output tables with sample schemas.
+
+### 20.4 White Paper
+
+Published via arXiv or Google Scholar (not gated). Linked from the landing page. Covers:
+- The admission signal reliability problem in healthcare data
+- ASRE's approach to multi-source reconciliation
+- Confidence scoring methodology
+
+### 20.5 Demo Flow
+
+Single 30-minute demo call via Calendly embed. No self-serve trial in v1.
+
+---
+
+## 21. Glossary
 
 | Term | Definition |
 |------|-----------|

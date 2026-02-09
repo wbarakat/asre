@@ -91,6 +91,9 @@ class TestIngestAdapterCompleteSubclass:
             def execute_ddl(self, ddl: str) -> None:
                 pass
 
+            def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
+                pass
+
             def write_records(
                 self,
                 table_name: str,

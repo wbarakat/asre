@@ -17,3 +17,5 @@ sources:
         description: "Per-run quality metrics with pass/warn/fail status, written by QualityCheckStage"
       - name: asre_episodes
         description: "Episode-level view with encounters grouped by care episode, written by EpisodeMaterializeStage"
+      - name: asre_facility_registry
+        description: "Canonical facility master with aliases, NPI, CCN, facility type, written by FacilityNormalizationStage"

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 
@@ -46,6 +48,86 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
     return result
 
 
+def _parse_warehouse_credentials(value: str, warehouse_type: str | None) -> dict[str, Any]:
+    """Parse ASRE_WAREHOUSE_CREDENTIALS into a connection dict."""
+    path = Path(value)
+    if path.exists() and path.is_file():
+        data = _load_yaml_file(path)
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"ASRE_WAREHOUSE_CREDENTIALS file must contain a mapping, got {type(data).__name__}"
+            )
+        return data
+
+    stripped = value.strip()
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "ASRE_WAREHOUSE_CREDENTIALS must be valid JSON or a path to a credentials file"
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError("ASRE_WAREHOUSE_CREDENTIALS JSON must be an object")
+        return data
+
+    if "://" in stripped:
+        parsed = urlparse(stripped)
+        scheme = parsed.scheme.lower()
+        if warehouse_type in ("postgres", "redshift") and scheme in (
+            "postgres",
+            "postgresql",
+            "redshift",
+        ):
+            query = parse_qs(parsed.query)
+            return {
+                "host": parsed.hostname or "",
+                "port": parsed.port or 5432,
+                "database": parsed.path.lstrip("/"),
+                "user": parsed.username or "",
+                "password": parsed.password or "",
+                "schema": query.get("schema", ["public"])[0],
+            }
+        raise ValueError(
+            "ASRE_WAREHOUSE_CREDENTIALS connection string only supported for postgres/redshift"
+        )
+
+    raise ValueError(
+        "ASRE_WAREHOUSE_CREDENTIALS must be JSON, a file path, or a supported connection string"
+    )
+
+
+def _apply_warehouse_env_overrides(config_data: dict[str, Any]) -> None:
+    """Apply ASRE_WAREHOUSE_* env vars to the loaded config data."""
+    warehouse_type = os.environ.get("ASRE_WAREHOUSE_TYPE")
+    credentials = os.environ.get("ASRE_WAREHOUSE_CREDENTIALS")
+    require_utf8 = os.environ.get("ASRE_REQUIRE_UTF8")
+
+    if warehouse_type is None and credentials is None:
+        if require_utf8 is None:
+            return
+
+    warehouse = config_data.get("warehouse")
+    if not isinstance(warehouse, dict):
+        warehouse = {}
+        config_data["warehouse"] = warehouse
+
+    if warehouse_type:
+        warehouse["type"] = warehouse_type
+    if credentials:
+        warehouse["connection"] = _parse_warehouse_credentials(credentials, warehouse_type)
+    if require_utf8 is not None:
+        conn = warehouse.get("connection")
+        if not isinstance(conn, dict):
+            conn = {}
+            warehouse["connection"] = conn
+        conn["require_utf8"] = _parse_bool(require_utf8)
+
+
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def load_config(config_path: str, customer_id: str) -> GlobalConfig:
     """Load customer config from filesystem with env var substitution.
 
@@ -70,6 +152,7 @@ def load_config(config_path: str, customer_id: str) -> GlobalConfig:
 
     # Load main config
     config_data = _load_yaml_file(config_file)
+    _apply_warehouse_env_overrides(config_data)
 
     # Load source configs
     sources: list[SourceConfig] = []

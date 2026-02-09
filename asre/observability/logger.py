@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -45,7 +46,8 @@ def get_logger(stage: str, run_id: str) -> logging.Logger:
     """
     name = f"asre.{stage}.{run_id}"
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    level_name = os.environ.get("ASRE_LOG_LEVEL", "INFO").upper()
+    logger.setLevel(getattr(logging, level_name, logging.INFO))
 
     # Avoid adding duplicate handlers if get_logger called multiple times
     if not logger.handlers:

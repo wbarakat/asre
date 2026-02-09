@@ -90,14 +90,14 @@ class TestPairedEventEmission:
     ) -> None:
         events = emitter.emit(claims_record, source_system="claims_clearinghouse", batch_id="batch-1")
         admit = events[0]
-        assert admit.event_ts == datetime.fromisoformat("2024-01-15T10:00:00")
+        assert admit.event_ts == datetime.fromisoformat("2024-01-15T10:00:00+00:00")
 
     def test_discharge_event_ts_uses_discharge_column(
         self, emitter: PairedEventEmitter, claims_record: dict[str, object]
     ) -> None:
         events = emitter.emit(claims_record, source_system="claims_clearinghouse", batch_id="batch-1")
         discharge = events[1]
-        assert discharge.event_ts == datetime.fromisoformat("2024-01-18T14:00:00")
+        assert discharge.event_ts == datetime.fromisoformat("2024-01-18T14:00:00+00:00")
 
     def test_admit_flag_set_on_admit_event(
         self, emitter: PairedEventEmitter, claims_record: dict[str, object]
@@ -177,14 +177,13 @@ class TestUniqueEventIds:
         events = emitter.emit(claims_record, source_system="claims_clearinghouse", batch_id="batch-1")
         assert events[0].event_id != events[1].event_id
 
-    def test_event_ids_are_uuids(
+    def test_event_ids_are_sha256_hex(
         self, emitter: PairedEventEmitter, claims_record: dict[str, object]
     ) -> None:
-        import uuid
-
         events = emitter.emit(claims_record, source_system="claims_clearinghouse", batch_id="batch-1")
         for event in events:
-            uuid.UUID(event.event_id)  # Raises ValueError if invalid
+            assert len(event.event_id) == 64
+            int(event.event_id, 16)
 
 
 class TestRawPayload:

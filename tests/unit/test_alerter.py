@@ -215,28 +215,56 @@ class TestFire:
         assert result is True
         assert mock_urlopen.call_count == 2
 
+    @patch("asre.quality.alerter.time.sleep")
     @patch("asre.quality.alerter.urlopen")
-    def test_network_failure_does_not_raise(self, mock_urlopen: MagicMock) -> None:
+    def test_network_failure_does_not_raise(self, mock_urlopen: MagicMock, _mock_sleep: MagicMock) -> None:
         from urllib.error import URLError
         mock_urlopen.side_effect = URLError("Connection refused")
 
-        alerter = Alerter(webhook_urls=["http://example.com/hook"])
+        alerter = Alerter(webhook_urls=["http://example.com/hook"], max_retries=1)
         # Must not raise
         result = alerter.fire("run_1", _sample_metrics(), _sample_statuses(), _sample_thresholds())
         assert result is False
 
+    @patch("asre.quality.alerter.time.sleep")
     @patch("asre.quality.alerter.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock) -> None:
+    def test_retries_on_failure(self, mock_urlopen: MagicMock, _mock_sleep: MagicMock) -> None:
+        from urllib.error import URLError
+        mock_urlopen.side_effect = URLError("Connection refused")
+
+        alerter = Alerter(webhook_urls=["http://example.com/hook"], max_retries=1)
+        alerter.fire("run_1", _sample_metrics(), _sample_statuses(), _sample_thresholds())
+        # 1 initial attempt + 1 retry = 2
+        assert mock_urlopen.call_count == 2
+
+    @patch("asre.quality.alerter.time.sleep")
+    @patch("asre.quality.alerter.urlopen")
+    def test_retries_with_default_count(self, mock_urlopen: MagicMock, _mock_sleep: MagicMock) -> None:
+        """Default max_retries=3 means 4 total attempts."""
         from urllib.error import URLError
         mock_urlopen.side_effect = URLError("Connection refused")
 
         alerter = Alerter(webhook_urls=["http://example.com/hook"])
         alerter.fire("run_1", _sample_metrics(), _sample_statuses(), _sample_thresholds())
-        # 1 initial attempt + 1 retry = 2
-        assert mock_urlopen.call_count == 2
+        # 1 initial attempt + 3 retries = 4
+        assert mock_urlopen.call_count == 4
 
+    @patch("asre.quality.alerter.time.sleep")
     @patch("asre.quality.alerter.urlopen")
-    def test_partial_success_returns_true(self, mock_urlopen: MagicMock) -> None:
+    def test_exponential_backoff_delays(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+        """Verify exponential backoff between retries."""
+        from urllib.error import URLError
+        mock_urlopen.side_effect = URLError("Connection refused")
+
+        alerter = Alerter(webhook_urls=["http://example.com/hook"], max_retries=3, backoff_base=1.0)
+        alerter.fire("run_1", _sample_metrics(), _sample_statuses(), _sample_thresholds())
+
+        sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
+        assert sleep_calls == [1.0, 2.0, 4.0]
+
+    @patch("asre.quality.alerter.time.sleep")
+    @patch("asre.quality.alerter.urlopen")
+    def test_partial_success_returns_true(self, mock_urlopen: MagicMock, _mock_sleep: MagicMock) -> None:
         """If one webhook succeeds and another fails, returns True."""
         from urllib.error import URLError
 
@@ -245,11 +273,12 @@ class TestFire:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        # First URL succeeds, second fails
+        # First URL succeeds, second fails (1 initial + 1 retry for second URL)
         mock_urlopen.side_effect = [mock_resp, URLError("fail"), URLError("fail")]
 
         alerter = Alerter(
-            webhook_urls=["http://example.com/ok", "http://example.com/bad"]
+            webhook_urls=["http://example.com/ok", "http://example.com/bad"],
+            max_retries=1,
         )
         result = alerter.fire("run_1", _sample_metrics(), _sample_statuses(), _sample_thresholds())
         assert result is True

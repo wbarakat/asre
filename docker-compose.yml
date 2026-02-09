@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: asre_test
+      POSTGRES_PASSWORD: asre_test
+      POSTGRES_DB: asre_test
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asre_test -d asre_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  asre:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASRE_CONFIG_PATH: /app/customer_config
+      ASRE_CUSTOMER_ID: test_customer
+      ASRE_WAREHOUSE_TYPE: postgres
+      ASRE_WAREHOUSE_CREDENTIALS: '{"host":"postgres","port":5432,"database":"asre_test","user":"asre_test","password":"asre_test","schema":"public","require_utf8":false}'
+      ASRE_LICENSE_KEY: ${ASRE_LICENSE_KEY:-}
+      ASRE_HEALTH_BIND: "0.0.0.0"
+    ports:
+      - "8080:8080"
+    command: ["run", "--config-path", "/app/customer_config", "--customer-id", "test_customer", "--mode", "incremental"]

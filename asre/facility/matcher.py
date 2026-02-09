@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz
 
 from asre.config.facility_alias_schema import FacilityAliasConfig
 from asre.facility.normalizer import FacilityNormalizer
+
+if TYPE_CHECKING:
+    from asre.facility.sqlite_registry import SQLiteRegistryLookup
 
 
 @dataclass
@@ -40,9 +44,12 @@ class FacilityMatcher:
         alias_config: FacilityAliasConfig,
         normalizer: FacilityNormalizer,
         fuzzy_threshold: float = 0.85,
+        sqlite_lookup: SQLiteRegistryLookup | None = None,
     ) -> None:
         self._normalizer = normalizer
         self._fuzzy_threshold = fuzzy_threshold
+        self._enable_fuzzy = fuzzy_threshold > 0
+        self._sqlite_lookup = sqlite_lookup
         # Build normalized alias -> canonical_id lookup
         self._alias_index: dict[str, str] = {}
         # Build NPI -> canonical_id lookup
@@ -56,15 +63,19 @@ class FacilityMatcher:
             normalized_name = normalizer.normalize(facility.canonical_name)
             if normalized_name:
                 self._alias_index[normalized_name] = facility.canonical_id
-                self._fuzzy_candidates.append((normalized_name, facility.canonical_id))
+                if self._enable_fuzzy:
+                    self._fuzzy_candidates.append(
+                        (normalized_name, facility.canonical_id)
+                    )
             # Index each alias (normalized)
             for alias in facility.aliases:
                 normalized_alias = normalizer.normalize(alias)
                 if normalized_alias:
                     self._alias_index[normalized_alias] = facility.canonical_id
-                    self._fuzzy_candidates.append(
-                        (normalized_alias, facility.canonical_id)
-                    )
+                    if self._enable_fuzzy:
+                        self._fuzzy_candidates.append(
+                            (normalized_alias, facility.canonical_id)
+                        )
             # Index NPI if present
             if facility.npi:
                 self._npi_index[facility.npi.strip()] = facility.canonical_id
@@ -158,6 +169,9 @@ class FacilityMatcher:
         if not facility_name:
             return None
 
+        if not self._enable_fuzzy:
+            return None
+
         normalized = self._normalizer.normalize(facility_name)
         if not normalized:
             return None
@@ -214,17 +228,45 @@ class FacilityMatcher:
         if result is not None:
             return result
 
-        # Tier 2: NPI match
+        # Tier 2: NPI match (config)
         if npi:
             result = self.match_npi(npi)
             if result is not None:
                 return result
 
-        # Tier 3: CCN match
+        # Tier 2b: NPI match (SQLite registry)
+        if npi and self._sqlite_lookup:
+            alias = self._sqlite_lookup.lookup_npi(npi)
+            if alias is not None:
+                self._npi_index[npi.strip()] = alias.canonical_id
+                normalized = self._normalizer.normalize(alias.canonical_name)
+                if normalized:
+                    self._alias_index[normalized] = alias.canonical_id
+                return MatchResult(
+                    canonical_id=alias.canonical_id,
+                    match_type="npi_registry",
+                    score=1.0,
+                )
+
+        # Tier 3: CCN match (config)
         if ccn:
             result = self.match_ccn(ccn)
             if result is not None:
                 return result
+
+        # Tier 3b: CCN match (SQLite registry)
+        if ccn and self._sqlite_lookup:
+            alias = self._sqlite_lookup.lookup_ccn(ccn)
+            if alias is not None:
+                self._ccn_index[ccn.strip()] = alias.canonical_id
+                normalized = self._normalizer.normalize(alias.canonical_name)
+                if normalized:
+                    self._alias_index[normalized] = alias.canonical_id
+                return MatchResult(
+                    canonical_id=alias.canonical_id,
+                    match_type="ccn_registry",
+                    score=1.0,
+                )
 
         # Tier 4: Fuzzy match
         result = self.match_fuzzy(facility_name)

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration typecheck lint install clean
+.PHONY: test test-unit test-integration typecheck lint install clean compose-up compose-down compose-test
 
 test:
 	python3 -m pytest tests/ -v
@@ -24,3 +24,12 @@ clean:
 	find . -type d -name .mypy_cache -exec rm -rf {} + 2>/dev/null || true
 
 check: typecheck test
+
+compose-up:
+	docker compose up -d postgres
+
+compose-down:
+	docker compose down -v
+
+compose-test:
+	docker compose up -d postgres && sleep 2 && pytest tests/integration/ -v

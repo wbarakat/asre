@@ -361,6 +361,24 @@ class TestMaterializeStageDetail:
         detail_records = detail_calls[0][0][1]
         assert len(detail_records) == 2  # 2 events -> 2 detail rows
 
+    def test_detail_rows_delete_existing_before_insert(self) -> None:
+        """Detail rows should be cleared for encounters before inserting."""
+        adapter = self._make_adapter()
+        context = self._make_context(adapter=adapter)
+
+        enc = _make_reconciled_encounter()
+        stage = MaterializeStage()
+        stage.encounters_in = [enc]
+
+        batch = EventBatch(batch_id="run_001", events=[])
+        stage.run(batch, context)
+
+        delete_calls = [
+            c for c in adapter.execute_ddl.call_args_list
+            if f"DELETE FROM {DETAIL_TABLE_NAME}" in c[0][0]
+        ]
+        assert delete_calls
+
     def test_detail_roles_assigned_correctly(self) -> None:
         """Detail rows have correct role_in_encounter values."""
         adapter = self._make_adapter()
@@ -395,7 +413,11 @@ class TestMaterializeStageDetail:
 
         ddl_calls = adapter.execute_ddl.call_args_list
         ddl_strs = [c[0][0] for c in ddl_calls]
-        detail_ddl = [d for d in ddl_strs if DETAIL_TABLE_NAME in d]
+        detail_ddl = [
+            d
+            for d in ddl_strs
+            if d.startswith("CREATE TABLE IF NOT EXISTS") and DETAIL_TABLE_NAME in d
+        ]
         assert len(detail_ddl) == 1
         assert "CREATE TABLE IF NOT EXISTS" in detail_ddl[0]
 

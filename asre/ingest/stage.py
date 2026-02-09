@@ -39,7 +39,7 @@ class IngestStage(PipelineStage):
         self.raw_records = []
         self.metrics = StageMetrics("ingest", context.run_id)
 
-        sources: list[dict[str, Any]] = context.config.get("sources", [])
+        sources = self._normalize_sources(context.config.get("sources", []))
         adapter = context.config.get("adapter")
         schedule = context.config.get("schedule", {})
         lookback_config: dict[str, str] = schedule.get("lookback_buffer", {"default": "24h"})
@@ -51,6 +51,18 @@ class IngestStage(PipelineStage):
             self.metrics.records_out = len(self.raw_records)
 
         return batch
+
+    @staticmethod
+    def _normalize_sources(sources: list[Any]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for src in sources:
+            if hasattr(src, "model_dump"):
+                normalized.append(src.model_dump())
+            elif hasattr(src, "dict"):
+                normalized.append(src.dict())
+            else:
+                normalized.append(src)
+        return normalized
 
     def _ingest_source(
         self,
@@ -82,6 +94,10 @@ class IngestStage(PipelineStage):
             lookback_hours = resolve_lookback_buffer_hours(lookback_config, source_type)
 
         # Build query
+        order_by = [incremental_key]
+        if source_record_id_field and source_record_id_field != incremental_key:
+            order_by.append(source_record_id_field)
+
         query_builder = IngestQueryBuilder(
             table=table,
             incremental_key=incremental_key,
@@ -89,6 +105,7 @@ class IngestStage(PipelineStage):
             exclude_filter=exclude_filter,
             watermark=watermark,
             lookback_buffer_hours=lookback_hours,
+            order_by=order_by,
         )
         query = query_builder.build_query()
         params = query_builder.build_params()
@@ -115,4 +132,3 @@ class IngestStage(PipelineStage):
             annotated.append(enriched)
 
         self.raw_records.extend(annotated)
-

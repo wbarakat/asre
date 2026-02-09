@@ -78,7 +78,8 @@ class RedshiftAdapter(IngestAdapter):
         Redshift SUPER columns are returned as their native string
         representations. Downstream stages handle JSON parsing.
         """
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             if params:
@@ -94,7 +95,8 @@ class RedshiftAdapter(IngestAdapter):
 
     def get_watermark(self, source_name: str) -> datetime | None:
         """Retrieve the last watermark for a source from asre_metadata."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             cursor.execute(
@@ -110,7 +112,8 @@ class RedshiftAdapter(IngestAdapter):
 
     def set_watermark(self, source_name: str, watermark: datetime) -> None:
         """Update the watermark for a source using DELETE + INSERT (Redshift lacks MERGE)."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         key = f"watermark_{source_name}"
         value = watermark.isoformat()
         cursor = self._connection.cursor()
@@ -128,10 +131,33 @@ class RedshiftAdapter(IngestAdapter):
 
     def execute_ddl(self, ddl: str) -> None:
         """Execute a DDL statement."""
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
         cursor = self._connection.cursor()
         try:
             cursor.execute(ddl)
+        finally:
+            cursor.close()
+
+    def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
+        """Execute a parameterized DML statement.
+
+        Translates :name style parameters to Redshift's %s style.
+        """
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
+        cursor = self._connection.cursor()
+        try:
+            if params:
+                import re
+                ordered_keys: list[str] = []
+                def _replace(match: re.Match[str]) -> str:
+                    ordered_keys.append(match.group(1))
+                    return "%s"
+                translated = re.sub(r":(\w+)", _replace, statement)
+                cursor.execute(translated, tuple(params[k] for k in ordered_keys))
+            else:
+                cursor.execute(statement)
         finally:
             cursor.close()
 
@@ -147,11 +173,12 @@ class RedshiftAdapter(IngestAdapter):
         """
         if not records:
             return 0
-        assert self._connection is not None, "Not connected. Call connect() first."
+        if self._connection is None:
+            raise RuntimeError("Not connected. Call connect() first.")
 
         columns = list(records[0].keys())
         col_list = ", ".join(columns)
-        val_list = ", ".join(["%s"] * len(columns))
+        val_list = ", ".join(f"%({col})s" for col in columns)
         qualified_table = f"{self._schema}.{table_name}" if self._schema else table_name
         stmt = f"INSERT INTO {qualified_table} ({col_list}) VALUES ({val_list})"
 

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from asre.config.source_schema import SourceConfig
 from asre.models.batch import EventBatch
 from asre.pipeline.runner import PipelineContext
 
@@ -59,6 +60,20 @@ def _adt_source_config() -> dict[str, Any]:
     }
 
 
+def _sample_adt_record() -> dict[str, Any]:
+    return {
+        "patient_id": "P001",
+        "event_timestamp": "2026-01-01T10:00:00",
+        "msg_id": "MSG-001",
+        "facility_name": "Test Hospital",
+        "patient_class": "I",
+        "hl7_event": "A01",
+        "_source_name": "adt_vendor_x",
+        "_source_type": "adt",
+        "_raw_payload": {},
+    }
+
+
 def _claims_source_config() -> dict[str, Any]:
     """Minimal claims source config for testing."""
     return {
@@ -90,6 +105,72 @@ def _claims_source_config() -> dict[str, Any]:
             ],
         },
     }
+
+
+def _sample_claims_record() -> dict[str, Any]:
+    return {
+        "member_id": "P123",
+        "admission_date": "2026-01-01",
+        "discharge_date": "2026-01-05",
+        "claim_id": "CLM-001",
+        "facility_name": "Test Hospital",
+        "payer": "AETNA",
+        "drg_code": "470",
+        "primary_dx": "I21.9",
+        "dx_codes": ["I21.9", "E11.9"],
+        "bill_type_code": "111",
+        "claim_type": "IP",
+        "_source_name": "claims_clearinghouse",
+        "_source_type": "claims",
+        "_raw_payload": {},
+    }
+
+
+class TestCanonicalizeStageSourceConfigModels:
+    """Ensure CanonicalizeStage accepts SourceConfig objects."""
+
+    def test_accepts_source_config_models(self) -> None:
+        from asre.canonicalize.stage import CanonicalizeStage
+
+        source_model = SourceConfig(**_adt_source_config())
+        ctx = _make_context([source_model], [_sample_adt_record()])
+        stage = CanonicalizeStage()
+        batch = EventBatch(batch_id="batch_1", events=[])
+
+        result = stage.run(batch, ctx)
+
+        assert len(result.events) == 1
+        assert result.events[0].event_type == "ADMIT"
+
+
+class TestCanonicalizeEventIdDeterminism:
+    def test_adt_event_id_is_deterministic(self) -> None:
+        from asre.canonicalize.stage import CanonicalizeStage
+
+        ctx = _make_context([_adt_source_config()], [_sample_adt_record()])
+
+        stage1 = CanonicalizeStage()
+        result1 = stage1.run(EventBatch(batch_id="b1", events=[]), ctx)
+
+        stage2 = CanonicalizeStage()
+        result2 = stage2.run(EventBatch(batch_id="b1", events=[]), ctx)
+
+        assert result1.events[0].event_id == result2.events[0].event_id
+
+    def test_claims_event_ids_are_deterministic(self) -> None:
+        from asre.canonicalize.stage import CanonicalizeStage
+
+        ctx = _make_context([_claims_source_config()], [_sample_claims_record()])
+
+        stage1 = CanonicalizeStage()
+        result1 = stage1.run(EventBatch(batch_id="b1", events=[]), ctx)
+
+        stage2 = CanonicalizeStage()
+        result2 = stage2.run(EventBatch(batch_id="b1", events=[]), ctx)
+
+        ids1 = sorted(e.event_id for e in result1.events)
+        ids2 = sorted(e.event_id for e in result2.events)
+        assert ids1 == ids2
 
 
 def _auth_source_config() -> dict[str, Any]:

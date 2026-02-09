@@ -55,7 +55,6 @@ class TestCheckpointState:
         # Use mock adapter for storage
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         mgr = CheckpointManager(adapter)
         mgr.save_checkpoint(
@@ -64,15 +63,12 @@ class TestCheckpointState:
             stage_index=0,
         )
 
-        # Verify write was called
-        adapter.write_records.assert_called()
-        call_args = adapter.write_records.call_args
-        assert call_args[0][0] == "asre_checkpoints"
-        records = call_args[0][1]
-        assert len(records) == 1
-        assert records[0]["run_id"] == "run_20250101_120000"
-        assert records[0]["last_completed_stage"] == "ingest"
-        assert records[0]["stage_index"] == 0
+        # Verify upsert was called
+        adapter.execute_ddl.assert_called_once()
+        sql = adapter.execute_ddl.call_args[0][0]
+        assert "asre_checkpoints" in sql
+        assert "run_20250101_120000" in sql
+        assert "ingest" in sql
 
     def test_checkpoint_contains_run_id_and_stage(self) -> None:
         """Checkpoint state includes: run_id, last_completed_stage, stage_index."""
@@ -80,7 +76,6 @@ class TestCheckpointState:
 
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         mgr = CheckpointManager(adapter)
         mgr.save_checkpoint(
@@ -89,12 +84,10 @@ class TestCheckpointState:
             stage_index=3,
         )
 
-        call_args = adapter.write_records.call_args
-        record = call_args[0][1][0]
-        assert "run_id" in record
-        assert "last_completed_stage" in record
-        assert "stage_index" in record
-        assert record["stage_index"] == 3
+        sql = adapter.execute_ddl.call_args[0][0]
+        assert "run_20250101_120000" in sql
+        assert "stitch" in sql
+        assert "3" in sql
 
     def test_load_checkpoint_returns_state(self) -> None:
         """Loading checkpoint for a run_id returns the last saved state."""
@@ -134,14 +127,18 @@ class TestCheckpointState:
 
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         mgr = CheckpointManager(adapter)
-        mgr.mark_completed("run_20250101_120000")
+        mgr.mark_completed(
+            "run_20250101_120000",
+            stage_name="episode_quality",
+            stage_index=11,
+        )
 
-        call_args = adapter.write_records.call_args
-        record = call_args[0][1][0]
-        assert record["status"] == "completed"
+        sql = adapter.execute_ddl.call_args[0][0]
+        assert "completed" in sql
+        assert "episode_quality" in sql
+        assert "11" in sql
 
     def test_checkpoint_status_failed_on_error(self) -> None:
         """When a stage fails, checkpoint status should be 'failed'."""
@@ -149,7 +146,6 @@ class TestCheckpointState:
 
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         mgr = CheckpointManager(adapter)
         mgr.mark_failed(
@@ -159,11 +155,28 @@ class TestCheckpointState:
             error="Stage dedup failed",
         )
 
-        call_args = adapter.write_records.call_args
-        record = call_args[0][1][0]
-        assert record["status"] == "failed"
-        assert record["last_completed_stage"] == "dedup"
-        assert record["error"] == "Stage dedup failed"
+        sql = adapter.execute_ddl.call_args[0][0]
+        assert "failed" in sql
+        assert "dedup" in sql
+        assert "Stage dedup failed" in sql
+
+    def test_save_checkpoint_uses_upsert_for_postgres(self) -> None:
+        """save_checkpoint should upsert by run_id for Postgres."""
+        from asre.pipeline.checkpoint import CheckpointManager
+
+        adapter = MagicMock()
+        adapter.warehouse_type = "postgres"
+
+        mgr = CheckpointManager(adapter)
+        mgr.save_checkpoint(
+            run_id="run_20260101_000000",
+            stage_name="ingest",
+            stage_index=0,
+        )
+
+        adapter.execute_ddl.assert_called_once()
+        sql = adapter.execute_ddl.call_args[0][0]
+        assert "ON CONFLICT (run_id)" in sql
 
 
 class TestCheckpointManagerTable:
@@ -194,7 +207,6 @@ class TestPipelineRunnerCheckpointing:
         if adapter is None:
             adapter = MagicMock()
             adapter.read_source.return_value = []
-            adapter.write_records.return_value = 1
         config: dict[str, Any] = {"adapter": adapter}
         runner = PipelineRunner(config=config, mode="full")
         return runner
@@ -203,7 +215,6 @@ class TestPipelineRunnerCheckpointing:
         """PipelineRunner should save a checkpoint after each stage completes."""
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         runner = self._make_runner_with_adapter(adapter)
         stage_names = [
@@ -219,13 +230,13 @@ class TestPipelineRunnerCheckpointing:
 
         # Should have written checkpoints (at least 9 stage checkpoints + 1 completion)
         checkpoint_writes = [
-            c for c in adapter.write_records.call_args_list
-            if c[0][0] == "asre_checkpoints"
+            c for c in adapter.execute_ddl.call_args_list
+            if "asre_checkpoints" in c[0][0]
         ]
         assert len(checkpoint_writes) >= 9
 
     def test_runner_resumes_from_checkpoint(self) -> None:
-        """PipelineRunner should skip completed stages when resuming."""
+        """PipelineRunner should replay all stages when resuming for correctness."""
         adapter = MagicMock()
         # Return a checkpoint indicating stitch (index 3) was last completed
         adapter.read_source.return_value = [
@@ -236,7 +247,6 @@ class TestPipelineRunnerCheckpointing:
                 "status": "in_progress",
             }
         ]
-        adapter.write_records.return_value = 1
 
         config: dict[str, Any] = {"adapter": adapter}
         runner = PipelineRunner(config=config, mode="full")
@@ -254,24 +264,37 @@ class TestPipelineRunnerCheckpointing:
 
         runner.run(resume_run_id="run_20250101_120000")
 
-        # Stages 0-3 (ingest through stitch) should NOT have been called
-        assert not stages["ingest"].called
-        assert not stages["canonicalize"].called
-        assert not stages["facility_normalize"].called
-        assert not stages["stitch"].called
-
-        # Stages 4+ (dedup onward) SHOULD have been called
+        # All stages should be replayed for correctness
+        assert stages["ingest"].called
+        assert stages["canonicalize"].called
+        assert stages["facility_normalize"].called
+        assert stages["stitch"].called
         assert stages["dedup"].called
         assert stages["reconcile"].called
         assert stages["score"].called
         assert stages["materialize"].called
         assert stages["quality_check"].called
 
+    def test_full_mode_runs_cleanup_before_stages(self) -> None:
+        """Full mode should clear derived tables before running stages."""
+        adapter = MagicMock()
+        adapter.read_source.return_value = []
+
+        runner = self._make_runner_with_adapter(adapter)
+        runner._stages = {"ingest": DummyStage("ingest")}
+
+        runner.run()
+
+        cleanup_calls = [
+            c for c in adapter.execute_ddl.call_args_list
+            if "DELETE FROM admission_events_unified" in c[0][0]
+        ]
+        assert cleanup_calls
+
     def test_failed_stage_records_checkpoint_with_failure(self) -> None:
         """When a stage fails, the checkpoint should record the failure."""
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         runner = self._make_runner_with_adapter(adapter)
 
@@ -294,19 +317,17 @@ class TestPipelineRunnerCheckpointing:
 
         # Should have a failed checkpoint write
         failed_writes = [
-            c for c in adapter.write_records.call_args_list
-            if c[0][0] == "asre_checkpoints"
-            and len(c[0][1]) > 0
-            and c[0][1][0].get("status") == "failed"
+            c for c in adapter.execute_ddl.call_args_list
+            if "asre_checkpoints" in c[0][0]
+            and "failed" in c[0][0]
         ]
         assert len(failed_writes) == 1
-        assert failed_writes[0][0][1][0]["error"] == "Stage dedup failed"
+        assert "Stage dedup failed" in failed_writes[0][0][0]
 
     def test_resume_nonexistent_run_raises_error(self) -> None:
         """Resuming a run_id that doesn't exist should raise a clear error."""
         adapter = MagicMock()
         adapter.read_source.return_value = []
-        adapter.write_records.return_value = 1
 
         runner = self._make_runner_with_adapter(adapter)
         runner._stages = {
@@ -331,7 +352,6 @@ class TestPipelineRunnerCheckpointing:
                 "status": "completed",
             }
         ]
-        adapter.write_records.return_value = 1
 
         runner = self._make_runner_with_adapter(adapter)
         runner._stages = {
