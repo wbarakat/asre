@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, cast
 
@@ -89,6 +90,13 @@ class BigQueryAdapter(IngestAdapter):
             ]
         )
 
+    @staticmethod
+    def _validate_identifier(value: str, label: str) -> str:
+        """Ensure BigQuery identifiers are restricted to safe characters."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+            raise ValueError(f"Invalid BigQuery {label}: {value!r}")
+        return value
+
     def read_source(
         self,
         source_name: str,
@@ -119,9 +127,9 @@ class BigQueryAdapter(IngestAdapter):
         """Retrieve the last watermark for a source from asre_metadata."""
         if self._client is None:
             raise RuntimeError("Not connected. Call connect() first.")
-        dataset = self._config.get("dataset", "")
+        dataset = self._validate_identifier(self._config.get("dataset", ""), "dataset")
         query = (
-            f"SELECT value FROM `{dataset}.asre_metadata` "
+            f"SELECT value FROM `{dataset}.asre_metadata` "  # nosec B608
             f"WHERE key = @key"
         )
         job_config = self._make_job_config(
@@ -137,11 +145,11 @@ class BigQueryAdapter(IngestAdapter):
         """Update the watermark for a source in asre_metadata using MERGE."""
         if self._client is None:
             raise RuntimeError("Not connected. Call connect() first.")
-        dataset = self._config.get("dataset", "")
+        dataset = self._validate_identifier(self._config.get("dataset", ""), "dataset")
         key = f"watermark_{source_name}"
         value = watermark.isoformat()
         query = (
-            f"MERGE `{dataset}.asre_metadata` AS target "
+            f"MERGE `{dataset}.asre_metadata` AS target "  # nosec B608
             f"USING (SELECT @key AS key, @value AS value) AS source "
             f"ON target.key = source.key "
             f"WHEN MATCHED THEN UPDATE SET value = source.value "
@@ -192,7 +200,8 @@ class BigQueryAdapter(IngestAdapter):
         if self._client is None:
             raise RuntimeError("Not connected. Call connect() first.")
 
-        dataset = self._config.get("dataset", "")
+        dataset = self._validate_identifier(self._config.get("dataset", ""), "dataset")
+        table_name = self._validate_identifier(table_name, "table name")
         columns = list(records[0].keys())
         col_list = ", ".join(columns)
 
@@ -215,7 +224,9 @@ class BigQueryAdapter(IngestAdapter):
                     escaped = str(val).replace("'", "\\'")
                     values.append(f"'{escaped}'")
             val_list = ", ".join(values)
-            query = f"INSERT INTO `{dataset}.{table_name}` ({col_list}) VALUES ({val_list})"
+            query = (
+                f"INSERT INTO `{dataset}.{table_name}` ({col_list}) VALUES ({val_list})"  # nosec B608
+            )
             query_job = self._client.query(query)
             query_job.result()
 

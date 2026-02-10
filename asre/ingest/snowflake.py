@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ except ImportError:
     snowflake_connect = None
 
 from asre.ingest.base import IngestAdapter
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class SnowflakeAdapter(IngestAdapter):
@@ -179,9 +182,14 @@ class SnowflakeAdapter(IngestAdapter):
             raise RuntimeError("Not connected. Call connect() first.")
 
         columns = list(records[0].keys())
+        for col in columns:
+            if not _IDENTIFIER_RE.fullmatch(col):
+                raise ValueError(f"Invalid Snowflake column name: {col!r}")
+        if not _IDENTIFIER_RE.fullmatch(table_name):
+            raise ValueError(f"Invalid Snowflake table name: {table_name!r}")
         col_list = ", ".join(columns)
         val_list = ", ".join(f"%({col})s" for col in columns)
-        stmt = f"INSERT INTO {table_name} ({col_list}) VALUES ({val_list})"
+        stmt = f"INSERT INTO {table_name} ({col_list}) VALUES ({val_list})"  # nosec B608
 
         cursor = self._connection.cursor()
         try:

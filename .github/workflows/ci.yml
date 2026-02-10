@@ -50,7 +50,7 @@ jobs:
       - name: Security scan (dependency audit)
         run: |
           pip install pip-audit
-          pip-audit --strict
+          pip-audit --strict .
 
       - name: Security scan (SAST)
         run: |

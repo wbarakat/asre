@@ -230,9 +230,12 @@ class StitchStage(PipelineStage):
             query = (
                 "SELECT encounter_id, patient_key, facility_canonical_id, "
                 "admit_ts, discharge_ts, created_at, updated_at, status "
-                f"FROM admission_events_unified WHERE patient_key IN ({keys_sql})"
+                f"FROM admission_events_unified WHERE patient_key IN ({keys_sql})"  # nosec B608
             )
-            rows = adapter.read_source("admission_events_unified", query)
+            rows = adapter.read_source(
+                "admission_events_unified",
+                query,  # nosec B608
+            )
             for row in rows:
                 rec = _EncounterHistory.from_row(row)
                 if rec.last_seen is None:

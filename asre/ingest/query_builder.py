@@ -53,7 +53,7 @@ class IngestQueryBuilder:
 
     def build_query(self) -> str:
         """Build the SQL query based on mode and filters."""
-        query = f"SELECT * FROM {self._table}"
+        query = f"SELECT * FROM {self._table}"  # nosec B608
 
         conditions: list[str] = []
 

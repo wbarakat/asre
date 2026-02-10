@@ -11,11 +11,9 @@ COPY asre/ asre/
 COPY dbt_project/ dbt_project/
 COPY customer_config/ customer_config/
 
-# Build wheel
-RUN pip wheel --no-cache-dir --wheel-dir /wheels .
-
-# Install warehouse adapter wheels
+# Build ASRE + warehouse adapter wheels in one resolution pass
 RUN pip wheel --no-cache-dir --wheel-dir /wheels \
+    . \
     "snowflake-connector-python>=3.0,<4.0" \
     "google-cloud-bigquery>=3.0,<4.0" \
     "redshift-connector>=2.0,<3.0" \

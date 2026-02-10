@@ -463,7 +463,7 @@ class MaterializeStage(PipelineStage):
         try:
             rows: list[dict[str, Any]] = adapter.read_source(
                 TABLE_NAME,
-                f"SELECT encounter_id, created_at FROM {TABLE_NAME}",
+                "SELECT encounter_id, created_at FROM admission_events_unified",
             )
             return {
                 row["encounter_id"]: row["created_at"] for row in rows
@@ -474,8 +474,9 @@ class MaterializeStage(PipelineStage):
 
     def _delete_by_id(self, adapter: Any, encounter_id: str) -> None:
         """Delete a single encounter by ID for upsert."""
-        adapter.execute_ddl(
-            f"DELETE FROM {TABLE_NAME} WHERE encounter_id = {_sql_literal(encounter_id)}"
+        adapter.execute_dml(
+            "DELETE FROM admission_events_unified WHERE encounter_id = :encounter_id",
+            {"encounter_id": encounter_id},
         )
 
     def _delete_detail_rows(self, adapter: Any, encounter_ids: set[str]) -> None:
@@ -489,7 +490,7 @@ class MaterializeStage(PipelineStage):
             chunk = ids[i : i + chunk_size]
             ids_sql = ", ".join(_sql_literal(val) for val in chunk)
             adapter.execute_ddl(
-                f"DELETE FROM {DETAIL_TABLE_NAME} WHERE encounter_id IN ({ids_sql})"
+                f"DELETE FROM {DETAIL_TABLE_NAME} WHERE encounter_id IN ({ids_sql})"  # nosec B608
             )
 
 

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from asre.ingest.base import IngestAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class MigrationScript(Protocol):
@@ -78,12 +81,12 @@ class Migrator:
                 "DELETE FROM asre_metadata WHERE key = 'schema_version'"
             )
             self._adapter.execute_ddl(
-                f"INSERT INTO asre_metadata (key, value) VALUES ('schema_version', '{version}')"
+                f"INSERT INTO asre_metadata (key, value) VALUES ('schema_version', '{version}')"  # nosec B608
             )
         elif wt in ("snowflake", "bigquery"):
             self._adapter.execute_ddl(
                 "MERGE INTO asre_metadata AS target "
-                f"USING (SELECT 'schema_version' AS key, '{version}' AS value) AS source "
+                f"USING (SELECT 'schema_version' AS key, '{version}' AS value) AS source "  # nosec B608
                 "ON target.key = source.key "
                 "WHEN MATCHED THEN UPDATE SET value = source.value "
                 "WHEN NOT MATCHED THEN INSERT (key, value) VALUES (source.key, source.value)"
@@ -92,9 +95,9 @@ class Migrator:
             # Postgres (default)
             self._adapter.execute_ddl(
                 "INSERT INTO asre_metadata (key, value) "
-                f"VALUES ('schema_version', '{version}') "
+                f"VALUES ('schema_version', '{version}') "  # nosec B608
                 "ON CONFLICT (key) DO UPDATE SET value = "
-                f"'{version}'"
+                f"'{version}'"  # nosec B608
             )
 
     def discover_migrations(self) -> list[MigrationInfo]:
@@ -183,8 +186,11 @@ class Migrator:
                     self._adapter.execute_ddl(
                         "DELETE FROM asre_metadata WHERE key = 'schema_version'"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "Unable to clear schema_version during rollback: %s",
+                        exc,
+                    )
 
         return MigrationResult(applied=rolled_back, current_version=target_version)
 

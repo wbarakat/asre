@@ -296,3 +296,27 @@ class TestFire:
 
         request_obj = mock_urlopen.call_args[0][0]
         assert request_obj.get_header("Content-type") == "application/json"
+
+    @patch("asre.quality.alerter.urlopen")
+    def test_rejects_non_http_webhook_scheme(self, mock_urlopen: MagicMock) -> None:
+        alerter = Alerter(webhook_urls=["file:///tmp/hook"])
+        result = alerter.fire(
+            "run_1",
+            _sample_metrics(),
+            _sample_statuses(),
+            _sample_thresholds(),
+        )
+        assert result is False
+        mock_urlopen.assert_not_called()
+
+    @patch("asre.quality.alerter.urlopen")
+    def test_rejects_webhook_without_host(self, mock_urlopen: MagicMock) -> None:
+        alerter = Alerter(webhook_urls=["http:///missing-host"])
+        result = alerter.fire(
+            "run_1",
+            _sample_metrics(),
+            _sample_statuses(),
+            _sample_thresholds(),
+        )
+        assert result is False
+        mock_urlopen.assert_not_called()

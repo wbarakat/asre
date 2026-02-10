@@ -193,7 +193,7 @@ class SQLiteRegistryLookup:
         if not npi or not npi.strip():
             return None
         row = self._conn.execute(
-            f"SELECT {_SELECT_COLS} FROM facilities WHERE npi = ? LIMIT 1",
+            f"SELECT {_SELECT_COLS} FROM facilities WHERE npi = ? LIMIT 1",  # nosec B608
             (npi.strip(),),
         ).fetchone()
         if row is None:
@@ -205,7 +205,7 @@ class SQLiteRegistryLookup:
         if not ccn or not ccn.strip():
             return None
         row = self._conn.execute(
-            f"SELECT {_SELECT_COLS} FROM facilities WHERE ccn = ? LIMIT 1",
+            f"SELECT {_SELECT_COLS} FROM facilities WHERE ccn = ? LIMIT 1",  # nosec B608
             (ccn.strip(),),
         ).fetchone()
         if row is None:

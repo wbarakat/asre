@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,13 @@ class Alerter:
 
         Returns ``True`` on a 2xx response, ``False`` otherwise.
         """
+        if not _is_supported_webhook_url(url):
+            logger.warning(
+                "Skipping webhook URL with unsupported scheme or host: %s",
+                url,
+            )
+            return False
+
         total_attempts = self._max_retries + 1
         for attempt in range(total_attempts):
             try:
@@ -156,7 +164,7 @@ class Alerter:
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urlopen(req, timeout=_WEBHOOK_TIMEOUT_SECONDS) as resp:
+                with urlopen(req, timeout=_WEBHOOK_TIMEOUT_SECONDS) as resp:  # nosec B310
                     if 200 <= resp.status < 300:
                         logger.info(
                             "Webhook alert delivered to %s (status %d)",
@@ -187,3 +195,9 @@ class Alerter:
 
         logger.error("All webhook delivery attempts to %s exhausted.", url)
         return False
+
+
+def _is_supported_webhook_url(url: str) -> bool:
+    """Allow only HTTP(S) webhook targets to prevent local-file access."""
+    parsed = urlparse(url)
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)

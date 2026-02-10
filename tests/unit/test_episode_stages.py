@@ -279,10 +279,15 @@ class TestEpisodeMaterializeStage:
         batch = EventBatch(batch_id="b1", events=[])
         stage.run(batch, _make_context({"adapter": adapter}))
 
-        # Should have called execute_ddl to update episode_id on encounters
-        ddl_calls = [str(c) for c in adapter.execute_ddl.call_args_list]
-        update_calls = [c for c in ddl_calls if "UPDATE" in c and "episode_id" in c]
-        assert len(update_calls) > 0
+        # Should have called execute_dml to update episode_id on encounters
+        assert adapter.execute_dml.call_count == 2
+        for call in adapter.execute_dml.call_args_list:
+            statement = call[0][0]
+            params = call[0][1]
+            assert "UPDATE admission_events_unified" in statement
+            assert "SET episode_id = :episode_id" in statement
+            assert "WHERE encounter_id = :encounter_id" in statement
+            assert params["episode_id"] == "EP_001"
 
     def test_no_adapter_skips_materialization(self) -> None:
         """Without adapter, stage skips writes gracefully."""

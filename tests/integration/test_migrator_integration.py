@@ -54,16 +54,24 @@ class TestMigratorIntegration:
         pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
 
         migrator = Migrator(pg_adapter)
+        latest_version = max(
+            (m.version for m in migrator.discover_migrations()),
+            default=0,
+        )
         result = migrator.run()
 
-        assert result.applied == 8
-        assert result.current_version == 9
+        assert result.applied == latest_version
+        assert result.current_version == latest_version
 
     def test_asre_metadata_table_created(self, pg_adapter: PostgresAdapter) -> None:
         """After migration, asre_metadata table exists with schema_version."""
         pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
 
         migrator = Migrator(pg_adapter)
+        latest_version = max(
+            (m.version for m in migrator.discover_migrations()),
+            default=0,
+        )
         migrator.run()
 
         # Verify table exists by reading from it
@@ -73,29 +81,37 @@ class TestMigratorIntegration:
         )
         assert len(rows) == 1
         assert rows[0]["key"] == "schema_version"
-        assert rows[0]["value"] == "9"
+        assert rows[0]["value"] == str(latest_version)
 
     def test_run_is_idempotent(self, pg_adapter: PostgresAdapter) -> None:
         """Running migrator twice doesn't error or re-apply."""
         pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
 
         migrator = Migrator(pg_adapter)
+        latest_version = max(
+            (m.version for m in migrator.discover_migrations()),
+            default=0,
+        )
         result1 = migrator.run()
         result2 = migrator.run()
 
-        assert result1.applied == 8
+        assert result1.applied == latest_version
         assert result2.applied == 0
-        assert result2.current_version == 9
+        assert result2.current_version == latest_version
 
     def test_schema_version_check(self, pg_adapter: PostgresAdapter) -> None:
         """get_schema_version returns correct value after migration."""
         pg_adapter.execute_ddl("DROP TABLE IF EXISTS asre_metadata")
 
         migrator = Migrator(pg_adapter)
+        latest_version = max(
+            (m.version for m in migrator.discover_migrations()),
+            default=0,
+        )
         migrator.run()
 
         version = migrator.get_schema_version()
-        assert version == 9
+        assert version == latest_version
 
     def test_auto_migration_on_fresh_database(self, pg_adapter: PostgresAdapter) -> None:
         """Auto-migration creates all tables from scratch on fresh DB."""

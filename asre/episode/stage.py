@@ -366,10 +366,14 @@ class EpisodeMaterializeStage(PipelineStage):
             # Update episode_id FK on encounters in admission_events_unified
             for episode in episodes:
                 for encounter_id in episode.encounter_ids:
-                    adapter.execute_ddl(
-                        f"UPDATE admission_events_unified "
-                        f"SET episode_id = '{episode.episode_id}' "
-                        f"WHERE encounter_id = '{encounter_id}'"
+                    adapter.execute_dml(
+                        "UPDATE admission_events_unified "
+                        "SET episode_id = :episode_id "
+                        "WHERE encounter_id = :encounter_id",
+                        {
+                            "episode_id": episode.episode_id,
+                            "encounter_id": encounter_id,
+                        },
                     )
 
             # Audit logging
@@ -437,7 +441,7 @@ class EpisodeMaterializeStage(PipelineStage):
         try:
             rows: list[dict[str, Any]] = adapter.read_source(
                 EPISODE_TABLE_NAME,
-                f"SELECT episode_id, created_at FROM {EPISODE_TABLE_NAME}",
+                "SELECT episode_id, created_at FROM asre_episodes",
             )
             return {
                 row["episode_id"]: row["created_at"] for row in rows
@@ -454,7 +458,7 @@ class EpisodeMaterializeStage(PipelineStage):
 
             if hasattr(adapter, "_connection") and adapter._connection is not None:
                 adapter._connection.execute(
-                    text(f"DELETE FROM {EPISODE_TABLE_NAME} WHERE episode_id = :eid"),
+                    text("DELETE FROM asre_episodes WHERE episode_id = :eid"),
                     {"eid": episode_id},
                 )
                 adapter._connection.commit()

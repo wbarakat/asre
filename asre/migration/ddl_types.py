@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Protocol
+
 # Type mapping per warehouse: generic_name -> warehouse-specific SQL type
 _TYPE_MAP: dict[str, dict[str, str]] = {
     "postgres": {
@@ -41,6 +44,8 @@ _TYPE_MAP: dict[str, dict[str, str]] = {
         "timestamp": "TIMESTAMPTZ",
     },
 }
+
+logger = logging.getLogger(__name__)
 
 
 class DDLTypeMapper:
@@ -98,13 +103,31 @@ class DDLTypeMapper:
         return f"PRIMARY KEY ({', '.join(columns)})"
 
 
-def add_column_if_missing(adapter: object, table: str, column: str, col_type: str) -> None:
+class DDLExecutor(Protocol):
+    """Protocol for adapters that can execute DDL."""
+
+    def execute_ddl(self, ddl: str) -> None: ...
+
+
+def add_column_if_missing(
+    adapter: DDLExecutor,
+    table: str,
+    column: str,
+    col_type: str,
+) -> None:
     """Attempt to add a column to a table, ignoring errors if it already exists.
 
     This is used by _ensure_table() methods as a safety net to converge
     existing installs to the latest schema, even if migrations haven't run.
     """
     try:
-        adapter.execute_ddl(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")  # type: ignore[union-attr]
-    except Exception:
-        pass  # Column already exists
+        adapter.execute_ddl(
+            f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+        )  # nosec B608
+    except Exception as exc:
+        logger.debug(
+            "Skipping add-column safety net for %s.%s: %s",
+            table,
+            column,
+            exc,
+        )

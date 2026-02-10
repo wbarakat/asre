@@ -274,9 +274,9 @@ class FacilityRegistry:
 
         # Delete existing rows for IDs we're about to write, then insert
         for db_rec in db_records:
-            cid = db_rec["canonical_id"].replace("'", "''")
-            adapter.execute_ddl(
-                f"DELETE FROM asre_facility_registry WHERE canonical_id = '{cid}'"
+            adapter.execute_dml(
+                "DELETE FROM asre_facility_registry WHERE canonical_id = :canonical_id",
+                {"canonical_id": db_rec["canonical_id"]},
             )
 
         count: int = adapter.write_records("asre_facility_registry", db_records)

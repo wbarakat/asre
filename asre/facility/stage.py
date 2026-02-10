@@ -62,25 +62,30 @@ class FacilityNormalizationStage(PipelineStage):
             The same EventBatch with facility_canonical_id populated on events.
         """
         self.metrics = StageMetrics("facility_normalize", context.run_id)
-        audit_entries: list[dict] = []
+        audit_entries: list[dict[str, str]] = []
 
         with self.metrics:
             self.metrics.records_in = len(batch.events)
 
             for event in batch.events:
                 self._resolve_facility(event)
+                entity_id = (
+                    event.facility_canonical_id
+                    or event.facility_raw
+                    or ""
+                )
                 if event.facility_match_type == "new":
                     audit_entries.append({
                         "action": "normalize",
                         "entity_type": "facility",
-                        "entity_id": event.facility_canonical_id or event.facility_raw,
+                        "entity_id": entity_id,
                         "detail": f"New facility created: {event.facility_raw} -> {event.facility_canonical_id}, flagged FACILITY_NEW_UNREVIEWED",
                     })
                 elif event.facility_match_type == "fuzzy":
                     audit_entries.append({
                         "action": "normalize",
                         "entity_type": "facility",
-                        "entity_id": event.facility_canonical_id or event.facility_raw,
+                        "entity_id": entity_id,
                         "detail": f"Fuzzy match: {event.facility_raw} -> {event.facility_canonical_id}",
                     })
 

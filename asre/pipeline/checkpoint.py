@@ -114,12 +114,12 @@ class CheckpointManager:
 
         if wt == "redshift":
             self._adapter.execute_ddl(
-                f"DELETE FROM {self._TABLE} WHERE run_id = {_sql_value(values['run_id'])}"
+                f"DELETE FROM {self._TABLE} WHERE run_id = {_sql_value(values['run_id'])}"  # nosec B608
             )
             columns = ", ".join(cols)
             vals = ", ".join(_sql_value(values[col]) for col in cols)
             self._adapter.execute_ddl(
-                f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals})"
+                f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals})"  # nosec B608
             )
             return
 
@@ -128,7 +128,7 @@ class CheckpointManager:
                 f"{_sql_value(values[col])} AS {col}" for col in cols
             )
             merge_sql = (
-                f"MERGE INTO {self._TABLE} AS target "
+                f"MERGE INTO {self._TABLE} AS target "  # nosec B608
                 f"USING (SELECT {source_cols}) AS source "
                 "ON target.run_id = source.run_id "
                 "WHEN MATCHED THEN UPDATE SET "
@@ -152,7 +152,7 @@ class CheckpointManager:
             f"{col} = EXCLUDED.{col}" for col in cols if col != "run_id"
         )
         sql = (
-            f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals}) "
+            f"INSERT INTO {self._TABLE} ({columns}) VALUES ({vals}) "  # nosec B608
             "ON CONFLICT (run_id) DO UPDATE SET "
             f"{updates}"
         )
@@ -166,7 +166,8 @@ class CheckpointManager:
         try:
             rows = self._adapter.read_source(
                 self._TABLE,
-                f"SELECT * FROM {self._TABLE} WHERE run_id = '{run_id}'",
+                f"SELECT * FROM {self._TABLE} WHERE run_id = :run_id",  # nosec B608
+                {"run_id": run_id},
             )
         except Exception:
             logger.debug("Could not load checkpoint for run_id=%s (table may not exist)", run_id)

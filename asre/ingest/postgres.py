@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from sqlalchemy.engine import Engine, Connection
 from asre.ingest.base import IngestAdapter
 
 logger = logging.getLogger(__name__)
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class PostgresAdapter(IngestAdapter):
@@ -160,10 +162,18 @@ class PostgresAdapter(IngestAdapter):
         if self._connection is None:
             raise RuntimeError("Not connected. Call connect() first.")
 
+        if not _IDENTIFIER_RE.fullmatch(table_name):
+            raise ValueError(f"Invalid PostgreSQL table name: {table_name!r}")
+
         columns = list(records[0].keys())
+        for col in columns:
+            if not _IDENTIFIER_RE.fullmatch(col):
+                raise ValueError(f"Invalid PostgreSQL column name: {col!r}")
         col_list = ", ".join(columns)
         val_list = ", ".join(f":{col}" for col in columns)
-        stmt = text(f"INSERT INTO {table_name} ({col_list}) VALUES ({val_list})")
+        stmt = text(
+            f"INSERT INTO {table_name} ({col_list}) VALUES ({val_list})"  # nosec B608
+        )
 
         for record in records:
             self._connection.execute(stmt, record)

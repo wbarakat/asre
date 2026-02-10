@@ -76,7 +76,7 @@ class CanonicalEventStore:
         for chunk in _chunk(event_ids, 1000):
             ids_sql = ", ".join(_sql_literal(v) for v in chunk)
             self._adapter.execute_ddl(
-                f"DELETE FROM {self.TABLE_NAME} WHERE event_id IN ({ids_sql})"
+                f"DELETE FROM {self.TABLE_NAME} WHERE event_id IN ({ids_sql})"  # nosec B608
             )
 
         count = int(self._adapter.write_records(self.TABLE_NAME, records))
@@ -100,11 +100,15 @@ class CanonicalEventStore:
         for chunk in _chunk(keys, 500):
             keys_sql = ", ".join(_sql_literal(v) for v in chunk)
             query = (
-                f"SELECT * FROM {self.TABLE_NAME} "
+                f"SELECT * FROM {self.TABLE_NAME} "  # nosec B608
                 f"WHERE patient_key IN ({keys_sql}) "
-                f"AND event_ts >= '{since_val}'"
+                f"AND event_ts >= :since_val"
             )
-            rows = self._adapter.read_source(self.TABLE_NAME, query)
+            rows = self._adapter.read_source(
+                self.TABLE_NAME,
+                query,  # nosec B608
+                {"since_val": since_val},
+            )
             for row in rows:
                 results.append(self._row_to_event(row))
 

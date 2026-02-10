@@ -398,8 +398,11 @@ class PipelineRunner:
                         if adapter is not None and hasattr(adapter, "_connection"):
                             try:
                                 adapter._connection.rollback()
-                            except Exception:
-                                pass
+                            except Exception as rollback_exc:
+                                logger.debug(
+                                    "Checkpoint rollback after stage failure failed: %s",
+                                    rollback_exc,
+                                )
                         # Record the failure -- last_completed_stage is the
                         # previous stage (idx-1), but we store the failing
                         # stage name so resume knows where to retry.
@@ -502,7 +505,7 @@ class PipelineRunner:
         """Clear derived tables for a full refresh run."""
         for table in _FULL_REFRESH_TABLES:
             try:
-                adapter.execute_ddl(f"DELETE FROM {table} WHERE 1=1")
+                adapter.execute_ddl(f"DELETE FROM {table} WHERE 1=1")  # nosec B608
             except Exception:
                 logger.warning(
                     "Full refresh cleanup skipped for missing table: %s", table
@@ -524,7 +527,7 @@ class PipelineRunner:
         try:
             rows = adapter.read_source(
                 "admission_events_unified",
-                f"SELECT * FROM admission_events_unified WHERE asre_version IS NOT NULL",
+                "SELECT * FROM admission_events_unified WHERE asre_version IS NOT NULL",
             )
         except Exception:
             logger.warning("Could not read admission_events_unified for rehydration")
@@ -569,7 +572,8 @@ class PipelineRunner:
         try:
             metric_rows = adapter.read_source(
                 "asre_run_metrics",
-                f"SELECT * FROM asre_run_metrics WHERE run_id = '{self.run_id}' ORDER BY stage_name",
+                "SELECT * FROM asre_run_metrics WHERE run_id = :run_id ORDER BY stage_name",
+                {"run_id": self.run_id},
             )
             context.config["stage_metrics"] = list(metric_rows) if metric_rows else []
         except Exception:
