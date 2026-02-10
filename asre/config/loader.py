@@ -114,8 +114,16 @@ def _apply_warehouse_env_overrides(config_data: dict[str, Any]) -> None:
 
     if warehouse_type:
         warehouse["type"] = warehouse_type
+    existing_type = warehouse.get("type")
+    effective_warehouse_type = (
+        warehouse_type
+        or (existing_type if isinstance(existing_type, str) else None)
+    )
     if credentials:
-        warehouse["connection"] = _parse_warehouse_credentials(credentials, warehouse_type)
+        warehouse["connection"] = _parse_warehouse_credentials(
+            credentials,
+            effective_warehouse_type,
+        )
     if require_utf8 is not None:
         conn = warehouse.get("connection")
         if not isinstance(conn, dict):
