@@ -1,0 +1,169 @@
+---
+title: "CLI Commands"
+description: "Complete reference for all ASRE CLI commands"
+---
+
+# CLI Commands
+
+All commands accept `--config-path` (or `ASRE_CONFIG_PATH` env var) and `--customer-id` (or `ASRE_CUSTOMER_ID` env var) where noted.
+
+---
+
+## Validate config
+
+Check your YAML configuration for errors without running the pipeline.
+
+```bash
+asre validate-config --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+## Validate environment
+
+Check that all required environment variables (`ASRE_CONFIG_PATH`, `ASRE_CUSTOMER_ID`, `ASRE_LICENSE_KEY`, warehouse credentials) are set.
+
+```bash
+asre validate-env
+```
+
+## Test connection
+
+Verify warehouse connectivity using configured credentials.
+
+```bash
+asre test-connection --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+---
+
+## Run pipeline
+
+```bash
+# Incremental mode (default) — process since last watermark
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --mode incremental
+
+# Full mode — clear derived tables and rebuild from scratch
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --mode full
+
+# Dry run — execute pipeline without writing to output tables
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --dry-run
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--mode` | `incremental` | `full` or `incremental` |
+| `--resume RUN_ID` | — | Replay a previously failed run |
+| `--dry-run` | `false` | Run without writing outputs |
+
+<Note>
+`ASRE_LICENSE_KEY` must be set as an environment variable before running the pipeline.
+</Note>
+
+## Resume a failed run
+
+```bash
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --resume <run_id>
+```
+
+Resume replays all stages from the start for correctness (intermediate in-memory outputs are not persisted).
+
+---
+
+## Status and inspection
+
+### Pipeline status
+
+Show the last run status and summary metrics.
+
+```bash
+asre status --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+### Inspect a run
+
+Show per-stage metrics for a specific pipeline run.
+
+```bash
+asre inspect run <run_id> --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+### Inspect an encounter
+
+Show encounter details with all contributing source events.
+
+```bash
+asre inspect encounter <encounter_id> --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+### Inspect errors
+
+Show failed events from a pipeline run.
+
+```bash
+# Errors from the last run
+asre inspect errors --last-run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+
+# Errors from a specific run
+asre inspect errors --run-id <run_id> --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+---
+
+## Facility management
+
+### List unresolved facilities
+
+Show facilities flagged as `FACILITY_NEW_UNREVIEWED` that need human review.
+
+```bash
+asre facilities --unresolved --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+### Resolve a facility
+
+Map an unresolved facility to an existing canonical ID.
+
+```bash
+asre facilities resolve <facility_id> --target <target_canonical_id> \
+  --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+### Build facility registry
+
+Build the bundled SQLite facility registry from NPPES and CMS POS data sources for NPI/CCN lookup during facility normalization.
+
+```bash
+asre build-registry --nppes /path/to/nppes.csv --output /path/to/registry.db
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--nppes` | Yes | Path to NPPES provider data CSV |
+| `--othernames` | No | Path to NPPES other names CSV |
+| `--pos-hospital` | No | Path to CMS POS hospital file |
+| `--pos-iqies` | No | Path to CMS POS iQIES file |
+| `--output` | Yes | Output path for SQLite registry file |
+| `--limit` | No | Limit number of records (for testing) |
+
+---
+
+## Episode management
+
+Recompute episodes from materialized encounters without re-running the full pipeline.
+
+```bash
+asre episodes --recompute --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+---
+
+## Schema migrations
+
+Migrations run automatically before every pipeline execution. You can also run them manually.
+
+```bash
+# Run pending migrations
+asre migrate --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+
+# Rollback to a specific version (0 = rollback all)
+asre migrate --rollback <version> --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```

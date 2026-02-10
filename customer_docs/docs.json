@@ -1,0 +1,58 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "ASRE Customer Docs",
+  "colors": {
+    "primary": "#0B5FFF"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "index",
+          "getting-started/overview",
+          "getting-started/installation",
+          "getting-started/onboarding"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration/overview",
+          "configuration/warehouse",
+          "configuration/sources",
+          "configuration/facility-normalization",
+          "configuration/quality-alerting"
+        ]
+      },
+      {
+        "group": "Pipelines",
+        "pages": [
+          "pipelines/overview",
+          "pipelines/stages",
+          "pipelines/episodes"
+        ]
+      },
+      {
+        "group": "Operations",
+        "pages": [
+          "operations/cli",
+          "operations/run-modes",
+          "operations/health",
+          "operations/migrations",
+          "operations/troubleshooting"
+        ]
+      },
+      {
+        "group": "Data Model",
+        "pages": [
+          "data-model/tables"
+        ]
+      }
+    ]
+  },
+  "search": {
+    "prompt": "Search ASRE docs"
+  }
+}

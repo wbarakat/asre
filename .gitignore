@@ -14,11 +14,30 @@ build/
 venv/
 env/
 
-# IDE
+# IDE / AI tools
 .idea/
 .vscode/
+.cursor/
+.windsurf/
+.trae/
+.goose/
+.agents/
+.claude/skills/
+skills/
 *.swp
 *.swo
+
+# Gradle
+.gradle/
+
+# Large data / vendor
+data/
+vendor/
+
+# Website build artifacts
+website/node_modules/
+website/out/
+website/.next/
 
 # Environment / secrets
 .env

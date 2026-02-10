@@ -1,0 +1,83 @@
+---
+title: "Warehouse"
+description: "Connection settings and UTF-8 requirements"
+---
+
+# Warehouse
+
+Warehouse settings live under `warehouse` in `config.yaml`, and can be overridden with environment variables.
+
+## Environment Variables
+
+- `ASRE_WAREHOUSE_TYPE` (`postgres`, `snowflake`, `bigquery`, `redshift`)
+- `ASRE_WAREHOUSE_CREDENTIALS`
+- `ASRE_REQUIRE_UTF8`
+
+## Credentials Formats
+
+`ASRE_WAREHOUSE_CREDENTIALS` can be:
+
+- JSON string
+- JSON/YAML file path
+- Postgres/Redshift connection string
+
+### Postgres
+
+```json
+{
+  "host": "your-host",
+  "port": 5432,
+  "database": "asre",
+  "user": "asre",
+  "password": "secret",
+  "schema": "public",
+  "require_utf8": true
+}
+```
+
+### Snowflake
+
+```json
+{
+  "account": "xy12345.us-east-1",
+  "user": "asre_user",
+  "password": "secret",
+  "database": "ANALYTICS",
+  "schema": "ASRE",
+  "warehouse": "COMPUTE_WH",
+  "role": "ASRE_ROLE"
+}
+```
+
+### BigQuery
+
+```json
+{
+  "project": "my-gcp-project",
+  "dataset": "asre",
+  "location": "US",
+  "service_account_json": "/secure/path/service-account.json"
+}
+```
+
+### Redshift
+
+```json
+{
+  "host": "my-cluster.abc123.us-east-1.redshift.amazonaws.com",
+  "port": 5439,
+  "database": "analytics",
+  "user": "asre_user",
+  "password": "secret",
+  "schema": "asre"
+}
+```
+
+<Warning>
+PostgreSQL must use UTF-8 server encoding in production. You can disable enforcement in dev with `require_utf8: false` or `ASRE_REQUIRE_UTF8=false`.
+</Warning>
+
+<Note>
+`ASRE_WAREHOUSE_TYPE` and `ASRE_WAREHOUSE_CREDENTIALS` are required only if those
+values are not fully defined in `config.yaml`.
+</Note>

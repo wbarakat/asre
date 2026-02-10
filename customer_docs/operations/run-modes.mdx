@@ -1,0 +1,99 @@
+---
+title: "Run Modes"
+description: "Incremental, full, resume, and dry-run execution modes"
+---
+
+# Run Modes
+
+ASRE supports four execution modes that control how data is processed and whether outputs are written.
+
+---
+
+## Incremental
+
+The default mode. Processes only new and recently changed records since the last run.
+
+```bash
+asre run --mode incremental
+```
+
+Incremental runs use **per-source watermarks** to determine what data to process. Each source table is queried with:
+
+```sql
+SELECT * FROM source_table
+WHERE incremental_key > last_watermark - lookback_buffer
+```
+
+**Lookback buffers** are applied per source type to account for late-arriving data. ADT signals typically arrive near real-time and need only a small lookback, while claims can lag by weeks and require a much larger window:
+
+```yaml
+schedule:
+  lookback_buffer:
+    adt: "2h"
+    claims: "45d"
+    auth: "7d"
+    default: "2h"
+```
+
+After a successful run, the watermark for each source is updated so the next run picks up only new data. If a run fails, the watermark is **not** updated, ensuring the same data is reprocessed on the next attempt.
+
+---
+
+## Full
+
+Processes all historical data from scratch. Use this for initial loads, disaster recovery, or after significant config changes.
+
+```bash
+asre run --mode full
+```
+
+A full run:
+
+1. Clears all derived ASRE tables (`admission_events_unified`, `asre_encounters_detail`, `asre_episodes`, etc.)
+2. Reads **all** records from every configured source table (no watermark filtering)
+3. Rebuilds encounters, episodes, and all output tables from scratch
+4. Resets watermarks based on the latest data processed
+
+<Warning>
+Full runs can take significantly longer than incremental runs and will temporarily remove all output data. Schedule during maintenance windows.
+</Warning>
+
+---
+
+## Resume
+
+Restarts a previously failed run from the beginning, reusing the same `run_id`.
+
+```bash
+asre run --resume <run_id>
+```
+
+Resume mode replays all stages from start rather than skipping completed stages. This is because in-memory pipeline state (event batches, encounter objects) is not persisted between runs. The same `run_id` is reused so that metrics and audit logs maintain continuity.
+
+Resume is useful when a run failed due to transient issues (network timeouts, temporary warehouse unavailability) and you want to retry without creating a new run.
+
+---
+
+## Dry Run
+
+Executes the full pipeline without writing any outputs to the warehouse.
+
+```bash
+asre run --mode incremental --dry-run
+# or via environment variable
+ASRE_DRY_RUN=true asre run
+```
+
+In dry-run mode:
+
+- All pipeline stages execute normally (ingest, canonicalize, stitch, score, etc.)
+- Quality metrics are computed and logged
+- **No tables are modified** -- no inserts, updates, or deletes in the warehouse
+- **No watermarks are updated** -- the next real run will process the same data
+
+Dry runs are useful for:
+
+- **Validating config changes** before applying them to production
+- **Testing new source mappings** without affecting outputs
+- **Estimating run impact** by reviewing logged metrics and counts
+- **Debugging** data quality issues by inspecting pipeline behavior

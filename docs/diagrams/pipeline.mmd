@@ -1,0 +1,27 @@
+flowchart LR
+  subgraph Sources
+    ADT["ADT raw table"]
+    Claims["Claims raw table"]
+    Auth["Auth raw table"]
+  end
+
+  Config["Config (YAML)"]
+  FacilityReg["Facility registry (NPI/CCN + aliases)"]
+
+  ADT --> Ingest
+  Claims --> Ingest
+  Auth --> Ingest
+  Config --> Ingest
+
+  Ingest --> Canonicalize --> FacilityNorm --> Stitch --> Dedup --> Reconcile --> Score --> Materialize --> QualityCheck --> EpisodeStitch --> EpisodeMaterialize --> EpisodeQuality
+
+  FacilityReg --> FacilityNorm
+  Ingest --> Checkpoints["asre_checkpoints (resume)"]
+
+  Materialize --> Out1["admission_events_unified"]
+  Materialize --> Out2["asre_encounters_detail"]
+  FacilityNorm --> Out3["asre_facility_registry"]
+  QualityCheck --> Out4["asre_quality_metrics"]
+  EpisodeMaterialize --> Out5["asre_episodes"]
+  Score --> Out6["asre_run_metrics"]
+  Materialize --> Out7["asre_audit_log"]

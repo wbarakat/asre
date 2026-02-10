@@ -1,0 +1,66 @@
+---
+title: "Installation"
+description: "Run ASRE locally or in your orchestration system"
+---
+
+# Installation
+
+ASRE is designed to run as a scheduled container. You can also run it locally for validation.
+
+## Requirements
+
+- A supported warehouse (Postgres, Snowflake, BigQuery, Redshift)
+- Read access to ADT/claims/auth source tables
+- Write access to the ASRE output schema
+- A valid `ASRE_LICENSE_KEY` (provided by your account representative)
+- Python 3.11+ (for local runs)
+
+## Local package install
+
+```bash
+pip install -e ".[dev]"
+
+# Optional connector extras for local non-Postgres runs
+# pip install -e ".[dev,snowflake]"
+# pip install -e ".[dev,bigquery]"
+# pip install -e ".[dev,redshift]"
+```
+
+## Docker run
+
+```bash
+docker run --rm \
+  -e ASRE_CONFIG_PATH=/app/customer_config \
+  -e ASRE_CUSTOMER_ID=your_customer_id \
+  -e ASRE_LICENSE_KEY=your_license_key \
+  -e ASRE_WAREHOUSE_TYPE=postgres \
+  -e ASRE_WAREHOUSE_CREDENTIALS=/app/warehouse.json \
+  -v $(pwd)/warehouse.json:/app/warehouse.json \
+  asre-engine:latest \
+  run --config-path /app/customer_config --customer-id your_customer_id --mode incremental
+```
+
+## Local run
+
+```bash
+export ASRE_CONFIG_PATH="$PWD/customer_config"
+export ASRE_CUSTOMER_ID="your_customer_id"
+export ASRE_LICENSE_KEY="your_license_key"
+export ASRE_WAREHOUSE_TYPE="postgres"   # postgres | snowflake | bigquery | redshift
+export ASRE_WAREHOUSE_CREDENTIALS=/path/to/warehouse.json
+
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --mode incremental
+```
+
+<Note>
+`ASRE_LICENSE_KEY` is required for pipeline execution. Contact your account representative to obtain a license key.
+</Note>
+
+<Note>
+`ASRE_WAREHOUSE_TYPE` and `ASRE_WAREHOUSE_CREDENTIALS` are required when those
+values are not fully defined in `config.yaml`.
+</Note>
+
+<Note>
+For a full refresh, use `--mode full`. Full mode clears derived tables before rebuilding.
+</Note>

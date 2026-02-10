@@ -1,0 +1,203 @@
+---
+title: "Output Tables"
+description: "Complete schema reference for all ASRE output tables"
+---
+
+# Output Tables
+
+ASRE produces the following tables in your warehouse. All tables are created and managed automatically via schema migrations.
+
+---
+
+## admission_events_unified
+
+The primary output table. One row per encounter with unified, reconciled data from all contributing sources.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `encounter_id` | STRING | No | Stable encounter ID derived from `hash(patient_key + facility_canonical_id + first_admit_source_record_id)` |
+| `patient_key` | STRING | No | Patient identifier from upstream MPI/EMPI |
+| `encounter_type` | STRING | No | `inpatient`, `observation`, `ed_only`, or `outpatient` |
+| `status` | STRING | No | `open`, `closed`, or `cancelled` |
+| `admit_ts` | TIMESTAMP | No | Best-known admission timestamp (selected by source priority) |
+| `discharge_ts` | TIMESTAMP | Yes | Best-known discharge timestamp (null if encounter is open) |
+| `facility_canonical_id` | STRING | No | Resolved canonical facility ID |
+| `facility_name` | STRING | No | Display name from facility registry |
+| `is_acute` | BOOLEAN | No | Derived from `facility_type` in the facility registry |
+| `los_hours` | FLOAT | Yes | Length of stay in hours (`discharge_ts - admit_ts`) |
+| `source_event_ids` | ARRAY[STRING] | No | All canonical event IDs composing this encounter |
+| `source_systems` | ARRAY[STRING] | No | Which source feeds contributed (e.g. `["adt_vendor_x", "claims_clearinghouse"]`) |
+| `has_adt` | BOOLEAN | No | At least one ADT event present |
+| `has_claims` | BOOLEAN | No | At least one claims event present |
+| `has_auth` | BOOLEAN | No | At least one auth signal present |
+| `confidence_score` | FLOAT | No | 0.0–1.0 weighted confidence score |
+| `confidence_flags` | ARRAY[STRING] | No | Flags affecting the score (e.g. `MISSING_DISCHARGE`, `TIMESTAMP_MISMATCH`) |
+| `admit_source_priority` | STRING | Yes | Source that determined `admit_ts` |
+| `discharge_source_priority` | STRING | Yes | Source that determined `discharge_ts` |
+| `payer_id` | STRING | Yes | Primary payer identifier |
+| `drg` | STRING | Yes | DRG code (from claims, if available) |
+| `principal_diagnosis` | STRING | Yes | Principal ICD-10 diagnosis from claims |
+| `admitting_diagnosis` | STRING | Yes | Admitting ICD-10 diagnosis |
+| `diagnosis_codes` | ARRAY[OBJECT] | Yes | All diagnoses with role, sequence, and POA indicator |
+| `is_readmission` | BOOLEAN | No | Readmit to any acute facility within 30 days of prior discharge |
+| `readmission_days` | INT | Yes | Days since prior discharge (populated only when `is_readmission` is true) |
+| `obs_to_ip_conversion` | BOOLEAN | No | True if observation converted to inpatient |
+| `transfer_chain` | ARRAY[STRING] | Yes | Ordered `encounter_id` values if part of a transfer sequence |
+| `episode_id` | STRING | Yes | FK to `asre_episodes` (populated by episode stitching) |
+| `created_at` | TIMESTAMP | No | When the encounter was first created |
+| `updated_at` | TIMESTAMP | No | Last modified timestamp |
+| `asre_version` | STRING | No | Engine version that produced this row |
+
+---
+
+## asre_encounters_detail
+
+Event-level detail for each encounter. One row per canonical event per encounter, showing the event's role.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `encounter_id` | STRING | No | FK to `admission_events_unified` |
+| `event_id` | STRING | No | FK to the canonical event |
+| `event_type` | STRING | No | Normalized event type (e.g. `ADMIT`, `DISCHARGE`, `CLAIM_ADMIT`) |
+| `event_ts` | TIMESTAMP | No | Event timestamp |
+| `source_system` | STRING | No | Originating feed identifier |
+| `role_in_encounter` | STRING | No | `admit_anchor`, `discharge_anchor`, `supporting`, or `conflicting` |
+
+---
+
+## asre_episodes
+
+Episode-of-care groupings. Each episode links related encounters across facilities and time for a single patient's care journey.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `episode_id` | STRING | No | Stable episode identifier |
+| `patient_key` | STRING | No | Patient identifier |
+| `episode_type` | STRING | No | `surgical`, `medical`, `chronic_exacerbation`, `maternity`, `behavioral_health`, or `unclassified` |
+| `episode_status` | STRING | No | `active`, `closed`, or `reopened` |
+| `episode_start_ts` | TIMESTAMP | No | Earliest `admit_ts` across all encounters in the episode |
+| `episode_end_ts` | TIMESTAMP | Yes | Latest `discharge_ts`, or null if episode is still active |
+| `total_los_days` | FLOAT | Yes | Cumulative length of stay across all encounters (in days) |
+| `encounter_ids` | ARRAY[STRING] | No | Ordered list of encounter IDs in this episode |
+| `encounter_count` | INT | No | Number of encounters in the episode |
+| `facility_count` | INT | No | Number of distinct facilities involved |
+| `facility_sequence` | ARRAY[STRING] | No | Ordered facility canonical IDs showing the care pathway |
+| `includes_readmission` | BOOLEAN | No | True if episode contains a readmission |
+| `includes_post_acute` | BOOLEAN | No | True if episode spans acute to post-acute care |
+| `is_acute` | BOOLEAN | No | True if any encounter in the episode is at an acute facility |
+| `principal_diagnosis` | STRING | Yes | Principal ICD-10 from the primary encounter |
+| `diagnosis_codes` | ARRAY[OBJECT] | Yes | Aggregated diagnoses across all encounters in the episode |
+| `confidence_score` | FLOAT | No | Episode-level confidence (weighted mean of encounter scores by LOS) |
+| `created_at` | TIMESTAMP | No | When the episode was first created |
+| `updated_at` | TIMESTAMP | No | Last modified timestamp |
+
+---
+
+## asre_facility_registry
+
+Canonical facility master. Updated automatically during facility normalization; new unresolved facilities are flagged for human review.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `facility_canonical_id` | STRING | No | Stable facility identifier |
+| `facility_name` | STRING | No | Canonical display name |
+| `npi` | STRING | Yes | NPI number |
+| `ccn` | STRING | Yes | CMS Certification Number |
+| `aliases` | ARRAY[STRING] | No | Known name variants |
+| `address` | STRING | Yes | Facility address |
+| `facility_type` | STRING | No | `acute`, `ltach`, `snf`, `rehab`, `psych`, or `ed_standalone` |
+| `last_updated` | TIMESTAMP | No | Last registry update timestamp |
+
+---
+
+## asre_quality_metrics
+
+Per-run quality metrics with threshold evaluation results.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `metric_id` | STRING | No | Unique metric ID |
+| `run_id` | STRING | No | Batch run identifier |
+| `run_ts` | TIMESTAMP | No | When the run completed |
+| `metric_name` | STRING | No | Metric identifier (e.g. `duplicate_rate`, `missing_discharge_rate`) |
+| `metric_value` | FLOAT | No | Measured value |
+| `threshold` | FLOAT | Yes | Configured threshold for this metric |
+| `status` | STRING | No | `pass`, `warn`, or `fail` |
+| `detail` | JSON | Yes | Supporting context |
+
+---
+
+## asre_audit_log
+
+Immutable audit trail for all pipeline modifications. Every create, update, and delete action is recorded.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `log_id` | STRING | No | Unique log entry ID |
+| `run_id` | STRING | No | Batch run identifier |
+| `timestamp` | TIMESTAMP | No | When the action occurred |
+| `action` | STRING | No | `ingest`, `stitch`, `dedup`, `reconcile`, `score`, `normalize`, or `episode_stitch` |
+| `entity_type` | STRING | No | `event`, `encounter`, `facility`, or `episode` |
+| `entity_id` | STRING | No | Affected entity ID |
+| `detail` | JSON | Yes | What changed and why |
+
+---
+
+## asre_run_metrics
+
+Per-stage pipeline observability. One row per stage per run.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `run_id` | STRING | No | Batch run ID |
+| `stage_name` | STRING | No | Pipeline stage name |
+| `started_at` | TIMESTAMP | No | Stage start time |
+| `completed_at` | TIMESTAMP | Yes | Stage end time |
+| `records_in` | INT | No | Records entering the stage |
+| `records_out` | INT | No | Records exiting the stage |
+| `errors` | INT | No | Failed records in the stage |
+| `status` | STRING | No | `success`, `failed`, or `skipped` |
+
+---
+
+## asre_canonical_events
+
+Staging table for canonicalized events. All source inputs are mapped into this schema before processing.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `event_id` | STRING | No | ASRE-generated unique ID (UUID) |
+| `patient_key` | STRING | No | Mapped patient identifier from customer MPI/EMPI |
+| `event_type` | STRING | No | Normalized event code (e.g. `ADMIT`, `DISCHARGE`, `CLAIM_ADMIT`) |
+| `event_ts` | TIMESTAMP | No | Event timestamp |
+| `source_system` | STRING | No | Originating feed identifier |
+| `source_record_id` | STRING | No | Original record ID from source (used for idempotent ingest) |
+| `facility_raw` | STRING | Yes | Raw facility name/ID from source |
+| `facility_canonical_id` | STRING | Yes | Resolved canonical facility ID (populated by normalization stage) |
+| `admit_flag` | BOOLEAN | No | True if event represents an admission |
+| `discharge_flag` | BOOLEAN | No | True if event represents a discharge |
+| `auth_flag` | BOOLEAN | No | True if event is an authorization signal |
+| `patient_class` | STRING | Yes | `inpatient`, `outpatient`, `observation`, `ed`, or null |
+| `drg` | STRING | Yes | DRG code (claims only) |
+| `principal_diagnosis` | STRING | Yes | Principal ICD-10 diagnosis code |
+| `diagnosis_codes` | JSON | Yes | Array of `{code, type, sequence, poa}` objects |
+| `auth_status` | STRING | Yes | `approved`, `denied`, `pending`, or null |
+| `payer_id` | STRING | Yes | Payer identifier |
+| `ingested_at` | TIMESTAMP | No | When ASRE ingested this record |
+| `batch_id` | STRING | No | Processing batch identifier |
+| `_raw_payload` | JSON | Yes | Original source record preserved for audit |
+
+---
+
+## asre_checkpoints
+
+Pipeline checkpoint state for run resume capability.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `run_id` | STRING | No | Batch run identifier |
+| `stage_name` | STRING | No | Pipeline stage name |
+| `status` | STRING | No | `pending`, `running`, `completed`, or `failed` |
+| `started_at` | TIMESTAMP | Yes | When the stage started |
+| `completed_at` | TIMESTAMP | Yes | When the stage completed |
+| `records_processed` | INT | Yes | Number of records processed in this stage |

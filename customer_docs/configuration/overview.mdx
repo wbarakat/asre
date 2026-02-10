@@ -1,0 +1,195 @@
+---
+title: "Configuration Overview"
+description: "Directory layout and configuration structure"
+---
+
+# Configuration Overview
+
+ASRE uses a simple file-based configuration.
+
+```
+customer_config/
+  <customer_id>/
+    config.yaml
+    facility_aliases.yaml
+    sources/
+      adt.yaml
+      claims.yaml
+      auth.yaml
+```
+
+## config.yaml
+
+Top-level settings for scheduling, stitching, deduplication, reconciliation, scoring, and alerting.
+
+Example:
+
+```yaml
+customer:
+  customer_id: acme_health
+  customer_name: Acme Health
+
+warehouse:
+  type: postgres  # postgres | snowflake | bigquery | redshift
+  connection: {}  # usually injected via ASRE_WAREHOUSE_CREDENTIALS
+
+schedule:
+  mode: incremental
+  lookback_buffer:
+    default: "24h"
+    adt: "24h"
+    claims: "72h"
+    auth: "24h"
+
+encounter_stitching:
+  time_window_hours: 48
+  facility_must_match: true
+  use_canonical_history: true
+  history_lookback_days: 90
+  stale_encounter_thresholds:
+    acute: 30
+    ed_standalone: 3
+    ltach: 90
+    snf: 120
+    rehab: 60
+    psych: 90
+    default: 30
+
+deduplication:
+  time_tolerance_minutes: 30
+  match_fields: ["patient_key", "event_type", "facility_canonical_id"]
+
+reconciliation:
+  timestamp_priority:
+    adt: 100
+    claims: 80
+    auth: 40
+  classification_priority:
+    claims: 100
+    adt: 80
+    auth: 40
+  timestamp_tolerance_hours: 24
+
+confidence_scoring:
+  weights:
+    HAS_CLAIMS: 30
+    HAS_ADT_ADMIT: 20
+    HAS_ADT_DISCHARGE: 10
+    HAS_AUTH: 10
+    FACILITY_RESOLVED: 5
+    TIMESTAMPS_CONSISTENT: 15
+    PATIENT_CLASS_CONSISTENT: 10
+  penalties:
+    MISSING_DISCHARGE: 0.15
+    ORPHAN_DISCHARGE: 0.20
+    TIMESTAMP_MISMATCH: 0.10
+    CLAIMS_ONLY_ENCOUNTER: 0.10
+    STALE_OPEN_ENCOUNTER: 0.20
+    DUPLICATE_DETECTED: 0.05
+    FACILITY_UNRESOLVED: 0.10
+    AUTH_WITHOUT_ADMIT: 0.05
+    CANCELLED_AND_REOPENED: 0.05
+
+episode_stitching:
+  enabled: true
+  rules:
+    readmission_window_days: 30
+    post_acute_linkage_days: 14
+    planned_return_days: 90
+    ed_bounceback_days: 7
+  condition_grouper: "ahrq_ccs"
+  episode_confidence:
+    method: "weighted_mean"
+
+alerting:
+  webhook_urls:
+    - "${ASRE_ALERT_WEBHOOK_URL}"
+  block_on_statuses: ["fail"]
+  thresholds:
+    duplicate_rate_warn: 0.05
+    duplicate_rate_fail: 0.15
+    missing_discharge_rate_warn: 0.10
+    missing_discharge_rate_fail: 0.25
+    reconciliation_mismatch_rate_warn: 0.10
+    reconciliation_mismatch_rate_fail: 0.20
+    low_confidence_rate_warn: 0.15
+    low_confidence_rate_fail: 0.30
+    failed_event_rate_warn: 0.01
+    failed_event_rate_fail: 0.05
+```
+
+## sources/*.yaml
+
+Source-specific schema mappings and source table definitions.
+
+Example ADT source:
+
+```yaml
+name: adt_vendor
+type: adt
+source:
+  table: raw.adt_events
+  incremental_key: event_ts
+field_mappings:
+  patient_key: mrn
+  event_ts: event_ts
+  event_type: event_type
+  facility_raw: facility_name
+```
+
+Example claims source:
+
+```yaml
+name: claims_clearinghouse
+type: claims
+source:
+  table: raw.claims
+  incremental_key: claim_ts
+field_mappings:
+  patient_key: member_id
+  admit_ts: admit_date
+  discharge_ts: discharge_date
+  facility_raw: facility_name
+paired_events:
+  admit_event_type: CLAIM_ADMIT
+  discharge_event_type: CLAIM_DISCHARGE
+```
+
+Example auth source:
+
+```yaml
+name: auth_feed
+type: auth
+source:
+  table: raw.auth
+  incremental_key: auth_ts
+field_mappings:
+  patient_key: member_id
+  event_ts: auth_ts
+  event_type: auth_status
+  facility_raw: facility_name
+```
+
+## facility_aliases.yaml
+
+Optional aliases and known facility identifiers to improve normalization.
+
+If you do not have aliases yet, keep this file valid with:
+
+```yaml
+facilities: []
+```
+
+Example:
+
+```yaml
+facilities:
+  - canonical_id: FAC_001
+    canonical_name: Saint Marys Hospital
+    npi: "1234567890"
+    ccn: "123456"
+    facility_type: acute
+    aliases:
+      - St Marys Hosp
+      - Saint Marys Hosp
+```

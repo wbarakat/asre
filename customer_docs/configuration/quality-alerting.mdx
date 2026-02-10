@@ -1,0 +1,177 @@
+---
+title: "Quality and Alerting"
+description: "Metrics, confidence scoring, thresholds, and webhook alerts"
+---
+
+# Quality and Alerting
+
+ASRE computes quality metrics on every run, assigns confidence scores to every encounter, and fires webhook alerts when configurable thresholds are breached.
+
+---
+
+## Quality Metrics
+
+Metrics are computed per run and stored in `asre_quality_metrics`.
+
+| Metric | Computation |
+|--------|------------|
+| `duplicate_rate` | (duplicates found) / (total events ingested) |
+| `missing_discharge_rate` | (open encounters > 48h) / (total encounters) |
+| `reconciliation_mismatch_rate` | (encounters with `TIMESTAMP_MISMATCH`) / (encounters with multiple sources) |
+| `low_confidence_rate` | (encounters with score &lt; 0.60) / (total encounters) |
+| `facility_unresolved_rate` | (events with unresolved facility) / (total events) |
+| `auth_without_admit_rate` | (auth signals with no matching encounter) / (total auth signals) |
+| `claims_only_rate` | (encounters from claims only) / (total encounters) |
+| `avg_confidence_score` | Mean confidence score across all encounters |
+| `events_ingested` | Count of events processed in this run |
+| `encounters_created` | New encounters in this run |
+| `encounters_updated` | Modified encounters in this run |
+| `failed_event_rate` | (events that failed processing) / (total events ingested) |
+
+---
+
+## Confidence Scoring
+
+### Signals and Weights
+
+Each encounter's confidence score is a weighted sum of binary signals, normalized to [0, 1]:
+
+```
+confidence_score = sum(signal_i * weight_i) / sum(weight_i)
+```
+
+| Signal | Default Weight | Condition for signal = 1 |
+|--------|---------------|-------------------------|
+| `HAS_CLAIMS` | 30 | At least one claims event matches |
+| `HAS_ADT_ADMIT` | 20 | ADT admit event present |
+| `HAS_ADT_DISCHARGE` | 10 | ADT discharge event present |
+| `HAS_AUTH` | 10 | Auth signal matches encounter |
+| `FACILITY_RESOLVED` | 5 | Facility matched to canonical ID |
+| `TIMESTAMPS_CONSISTENT` | 15 | ADT and claims timestamps within `timestamp_tolerance_hours` |
+| `PATIENT_CLASS_CONSISTENT` | 10 | ADT and claims agree on encounter type |
+
+Maximum raw score: 100 (normalized to 1.0).
+
+### Penalty Flags
+
+Penalties are subtracted from the base score (floor at 0.0):
+
+| Flag | Penalty | Trigger |
+|------|---------|---------|
+| `MISSING_DISCHARGE` | -0.15 | No discharge event and encounter open > 48h |
+| `ORPHAN_DISCHARGE` | -0.20 | Discharge without matching admit |
+| `TIMESTAMP_MISMATCH` | -0.10 | ADT vs claims admit time differs beyond `timestamp_tolerance_hours` |
+| `CLAIMS_ONLY_ENCOUNTER` | -0.10 | No ADT signals present |
+| `STALE_OPEN_ENCOUNTER` | -0.20 | Open beyond facility-type threshold with no activity |
+| `DUPLICATE_DETECTED` | -0.05 | Duplicates found and resolved |
+| `FACILITY_UNRESOLVED` | -0.10 | Facility could not be matched |
+| `AUTH_WITHOUT_ADMIT` | -0.05 | Auth exists but no encounter match |
+| `CANCELLED_AND_REOPENED` | -0.05 | Cancel event followed by re-admit |
+
+### Score Ranges
+
+| Range | Label | Recommended Action |
+|-------|-------|-------------------|
+| 0.85--1.00 | High | Trusted for downstream use |
+| 0.60--0.84 | Medium | Usable; review flagged issues |
+| 0.30--0.59 | Low | Manual review recommended |
+| 0.00--0.29 | Very Low | Do not use without investigation |
+
+### Configuration
+
+```yaml
+confidence_scoring:
+  weights:
+    HAS_CLAIMS: 30
+    HAS_ADT_ADMIT: 20
+    HAS_ADT_DISCHARGE: 10
+    HAS_AUTH: 10
+    FACILITY_RESOLVED: 5
+    TIMESTAMPS_CONSISTENT: 15
+    PATIENT_CLASS_CONSISTENT: 10
+  penalties:
+    MISSING_DISCHARGE: 0.15
+    ORPHAN_DISCHARGE: 0.20
+    TIMESTAMP_MISMATCH: 0.10
+    CLAIMS_ONLY_ENCOUNTER: 0.10
+    STALE_OPEN_ENCOUNTER: 0.20
+    DUPLICATE_DETECTED: 0.05
+    FACILITY_UNRESOLVED: 0.10
+    AUTH_WITHOUT_ADMIT: 0.05
+    CANCELLED_AND_REOPENED: 0.05
+```
+
+---
+
+## Thresholds
+
+Define `warn` and `fail` thresholds for each metric. When a metric crosses a threshold, it is flagged accordingly in `asre_quality_metrics`.
+
+```yaml
+alerting:
+  thresholds:
+    duplicate_rate_warn: 0.05
+    duplicate_rate_fail: 0.15
+    missing_discharge_rate_warn: 0.10
+    missing_discharge_rate_fail: 0.25
+    reconciliation_mismatch_rate_warn: 0.10
+    reconciliation_mismatch_rate_fail: 0.20
+    low_confidence_rate_warn: 0.15
+    low_confidence_rate_fail: 0.30
+    failed_event_rate_warn: 0.01
+    failed_event_rate_fail: 0.05
+```
+
+---
+
+## Quality Gates
+
+Block the pipeline when any metric reaches a specified severity:
+
+```yaml
+alerting:
+  block_on_statuses: ["fail"]
+```
+
+<Warning>
+When a quality gate is triggered, the run fails after metrics are written. No watermark is updated, so the next incremental run will reprocess the same data.
+</Warning>
+
+---
+
+## Webhook Alerts
+
+Alerts are sent as JSON POST requests to configured webhook URLs.
+
+```yaml
+alerting:
+  enabled: true
+  channels:
+    - type: "webhook"
+      url: "${ASRE_ALERT_WEBHOOK_URL}"
+```
+
+### Payload Format
+
+```json
+{
+  "run_id": "run_20260201_1030",
+  "run_ts": "2026-02-01T10:45:00Z",
+  "alerts": [
+    {
+      "metric": "duplicate_rate",
+      "value": 0.18,
+      "threshold": 0.15,
+      "severity": "fail"
+    },
+    {
+      "metric": "low_confidence_rate",
+      "value": 0.17,
+      "threshold": 0.15,
+      "severity": "warn"
+    }
+  ]
+}
+```
+
+The payload contains only aggregate metrics -- never PHI. Compatible with Slack incoming webhooks, PagerDuty, email relays, or any service that accepts JSON POST requests.

@@ -21,9 +21,20 @@ ASRE (Admission Signal Reliability Engine) is a healthcare data reliability laye
 # CLI commands (inside container or local dev)
 asre run --mode full              # Full historical reprocessing
 asre run --mode incremental       # Process since last watermark (default)
+asre run --resume RUN_ID          # Replay a previously failed run
 asre validate-config              # Validate YAML config only
+asre validate-env                 # Validate required environment variables
 asre test-connection              # Test warehouse connectivity
 asre status                       # Show pipeline status
+asre inspect run RUN_ID           # Per-stage metrics for a run
+asre inspect encounter ENC_ID     # Encounter details with source events
+asre inspect errors --last-run    # Failed events from last run
+asre facilities --unresolved      # List unresolved facilities
+asre facilities resolve ID --target TARGET  # Map facility to canonical ID
+asre episodes --recompute         # Recompute episodes without full pipeline
+asre migrate                      # Run pending schema migrations
+asre migrate --rollback VERSION   # Rollback to a specific migration version
+asre build-registry               # Build SQLite facility registry from NPPES/CMS
 
 # dbt (from dbt_project/ directory)
 dbt run                           # Execute all models
@@ -48,10 +59,10 @@ Unit test coverage targets: config loader, field mapper, event type resolver, fa
 ### Pipeline Stages (sequential, in order)
 
 ```
-Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> Score -> Materialize -> Quality Check
+Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> Score -> Materialize -> Quality Check -> Episode Stitch -> Episode Materialize -> Episode Quality
 ```
 
-All internal processing uses the `EventBatch` abstraction (streaming-ready interface, batch-only in v1). The pipeline runner in `pipeline/runner.py` orchestrates stage sequencing.
+All internal processing uses the `EventBatch` abstraction (streaming-ready interface, batch-only in v1). The pipeline runner in `pipeline/runner.py` orchestrates 12 stages sequentially.
 
 ### Key Module Responsibilities
 
@@ -63,16 +74,19 @@ All internal processing uses the `EventBatch` abstraction (streaming-ready inter
 - **`reconcile/`** -- Resolves conflicts across ADT/claims/auth sources. Selects timestamps by source priority, resolves encounter type, flags mismatches (TIMESTAMP_MISMATCH, CLAIMS_ONLY_ENCOUNTER, ORPHAN_DISCHARGE, etc.).
 - **`score/`** -- Weighted confidence scoring (0.0-1.0). Signals: HAS_CLAIMS(30), HAS_ADT_ADMIT(20), TIMESTAMPS_CONSISTENT(15), etc. Penalties for missing discharge, orphan discharge, stale encounters. All weights/penalties configurable per customer.
 - **`quality/`** -- Computes per-run metrics (duplicate_rate, missing_discharge_rate, etc.), evaluates thresholds, fires webhook alerts.
+- **`episode/`** -- Groups related encounters into episodes using readmission windows, post-acute linkage, planned return windows, and ED bounceback rules. Includes episode stitching, materialization, and quality stages.
 - **`models/`** -- Core dataclasses: `CanonicalEvent`, `Encounter`, `EventBatch`.
-- **`dbt_project/`** -- SQL models organized as staging -> intermediate -> marts. Marts produce the 5 output tables.
+- **`dbt_project/`** -- SQL models organized as staging -> intermediate -> marts. Marts produce the 7 output tables.
 
 ### Output Tables
 
 1. **`admission_events_unified`** -- Primary output. Encounter-level unified view with confidence scores.
 2. **`asre_encounters_detail`** -- Event-level detail with role classifications (admit_anchor, discharge_anchor, supporting, conflicting).
-3. **`asre_facility_registry`** -- Canonical facility master with aliases, NPI, CCN, facility type.
-4. **`asre_quality_metrics`** -- Per-run quality metrics with pass/warn/fail status.
-5. **`asre_audit_log`** -- All pipeline modifications tracked for audit.
+3. **`asre_episodes`** -- Episode-level groupings linking related encounters (readmissions, transfers, post-acute chains).
+4. **`asre_facility_registry`** -- Canonical facility master with aliases, NPI, CCN, facility type.
+5. **`asre_quality_metrics`** -- Per-run quality metrics with pass/warn/fail status.
+6. **`asre_run_metrics`** -- Per-stage timing, record counts, and error counts for each pipeline run.
+7. **`asre_audit_log`** -- All pipeline modifications tracked for audit.
 
 ### Data Flow
 

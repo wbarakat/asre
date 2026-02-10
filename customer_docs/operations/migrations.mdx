@@ -1,0 +1,76 @@
+---
+title: "Migrations"
+description: "Schema versioning, auto-migration, and upgrade process"
+---
+
+# Migrations
+
+ASRE manages its own database schema through versioned migrations that run automatically on startup.
+
+---
+
+## Version Tracking
+
+Schema versions are tracked in the `asre_metadata` table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `key` | STRING | Metadata key |
+| `value` | STRING | Metadata value |
+| `updated_at` | TIMESTAMP | Last update |
+
+The `schema_version` key stores the current schema version (e.g., `1.0.0`).
+
+To inspect the current version, query:
+
+```sql
+SELECT value FROM asre_metadata WHERE key = 'schema_version';
+```
+
+---
+
+## Auto-Migration
+
+On every startup, ASRE:
+
+1. Checks if `asre_metadata` exists. If not, this is a **fresh install** and the full initial schema is created.
+2. Reads `schema_version` from `asre_metadata`.
+3. Compares against the expected version for the running engine.
+4. If behind, runs all pending migration scripts in order.
+5. Updates `schema_version` after successful migration.
+
+You can also trigger migrations manually:
+
+```bash
+# Run pending migrations
+asre migrate --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+
+# Rollback to a specific version (0 = rollback all)
+asre migrate --rollback <version> --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+```
+
+---
+
+## Migration History
+
+Migrations are versioned Python scripts in `asre/migration/versions/`:
+
+| Migration | What It Creates |
+|-----------|----------------|
+| `_001_initial_schema.py` | All ASRE tables: `asre_metadata`, `admission_events_unified`, `asre_encounters_detail`, `asre_audit_log`, `asre_run_metrics`, `asre_quality_metrics`, `asre_episodes`, `asre_canonical_events`, `asre_facility_registry` |
+
+Each migration implements `upgrade()` and `downgrade()` methods with warehouse-specific DDL via the `ddl_types` abstraction layer. Migrations are tested against all supported warehouse targets (Snowflake, BigQuery, Redshift, Postgres).
+
+---
+
+## Fresh Install vs. Upgrade
+
+| Scenario | What Happens |
+|----------|-------------|
+| **Fresh install** (no `asre_metadata` table) | Full schema creation -- all migrations run in order |
+| **Upgrade** (existing `asre_metadata`) | Only pending migrations run, starting after the current `schema_version` |
+| **Same version** | No migrations needed; startup continues normally |
+
+<Note>
+Migrations are backward-compatible within a major version. Always upgrade ASRE before running `asre migrate` or starting a pipeline run.
+</Note>

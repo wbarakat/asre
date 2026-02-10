@@ -1,0 +1,1858 @@
+{
+  "project": "ASRE",
+  "branchName": "ralph/asre-admission-signal-reliability-engine",
+  "description": "ASRE (Admission Signal Reliability Engine) - Healthcare data reliability layer that ingests raw ADT, claims, authorization, and eligibility signals and produces admission_events_unified: a stitched, deduplicated, reconciled encounter table.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create Python project structure",
+      "description": "As a developer, I need a properly configured Python project so I can install dependencies and run tests.",
+      "acceptanceCriteria": [
+        "pyproject.toml declares Python 3.11+ requirement",
+        "Dependencies include: pydantic, pyyaml, click, rapidfuzz, dbt-core, dbt-postgres, sqlalchemy, psycopg2-binary, pytest, pytest-syrupy",
+        "pip install -e . succeeds",
+        "Project follows structure from SPEC \u00a716",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Define CanonicalEvent dataclass",
+      "description": "As a developer, I need the canonical event schema as a Python dataclass so all pipeline stages share a contract.",
+      "acceptanceCriteria": [
+        "asre/models/canonical_event.py defines CanonicalEvent with all fields from SPEC \u00a73.2",
+        "Fields: event_id, patient_key, event_type, event_ts, source_system, source_record_id, facility_raw, facility_canonical_id, admit_flag, discharge_flag, auth_flag, patient_class, drg, principal_diagnosis, diagnosis_codes, auth_status, payer_id, ingested_at, batch_id, _raw_payload",
+        "Proper types: str, bool, datetime, Optional where nullable in spec",
+        "Dataclass is importable: from asre.models.canonical_event import CanonicalEvent",
+        "Unit test verifies construction and field types",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Define Encounter dataclass",
+      "description": "As a developer, I need the encounter output schema as a Python dataclass matching admission_events_unified.",
+      "acceptanceCriteria": [
+        "asre/models/encounter.py defines Encounter with all fields from SPEC \u00a73.4 (admission_events_unified)",
+        "Fields include: encounter_id, patient_key, encounter_type, status, admit_ts, discharge_ts, facility_canonical_id, facility_name, is_acute, los_hours, source_event_ids, source_systems, has_adt, has_claims, has_auth, confidence_score, confidence_flags, admit_source_priority, discharge_source_priority, payer_id, drg, principal_diagnosis, admitting_diagnosis, diagnosis_codes, is_readmission, readmission_days, obs_to_ip_conversion, transfer_chain, episode_id, created_at, updated_at, asre_version",
+        "Unit test verifies construction",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Define Episode dataclass",
+      "description": "As a developer, I need the episode output schema as a Python dataclass matching asre_episodes.",
+      "acceptanceCriteria": [
+        "asre/models/episode.py defines Episode with all fields from SPEC \u00a73.4 (asre_episodes)",
+        "Fields include: episode_id, patient_key, episode_type, episode_status, episode_start_ts, episode_end_ts, total_los_days, encounter_ids, encounter_count, facility_count, facility_sequence, includes_readmission, includes_post_acute, is_acute, principal_diagnosis, diagnosis_codes, confidence_score, created_at, updated_at",
+        "Unit test verifies construction",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Define DiagnosisCode model",
+      "description": "As a developer, I need a structured model for diagnosis codes used across canonical events and encounters.",
+      "acceptanceCriteria": [
+        "asre/models/diagnosis.py defines DiagnosisCode with fields: code, type, sequence, poa",
+        "Can be serialized to/from dict (for JSON/VARIANT storage)",
+        "Unit test verifies round-trip serialization",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Define EventBatch dataclass",
+      "description": "As a developer, I need the EventBatch abstraction for internal processing.",
+      "acceptanceCriteria": [
+        "asre/models/batch.py defines EventBatch with batch_id: str and events: list[CanonicalEvent] per SPEC \u00a72.4",
+        "Unit test verifies construction and event access",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Implement structured JSON logging",
+      "description": "As a developer, I need structured logging so every pipeline stage emits consistent JSON logs with stage context.",
+      "acceptanceCriteria": [
+        "asre/observability/logger.py provides a get_logger(stage: str, run_id: str) function",
+        "Log output is JSON with fields: timestamp, level, stage, run_id, message (per SPEC \u00a710.1)",
+        "Additional fields (records_in, records_out, duration_seconds) can be passed as kwargs",
+        "Unit test verifies JSON structure of emitted logs",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Implement per-stage metrics tracking",
+      "description": "As a developer, I need a metrics tracker so each pipeline stage records timing, throughput, and error counts.",
+      "acceptanceCriteria": [
+        "asre/observability/metrics.py provides StageMetrics class",
+        "Tracks: stage_name, started_at, completed_at, records_in, records_out, errors, status",
+        "Context manager interface: with StageMetrics('ingest', run_id) as m: that auto-captures timing",
+        "to_dict() method for persistence to asre_run_metrics table",
+        "Unit test verifies timing capture and field population",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Define PipelineStage interface",
+      "description": "As a developer, I need a pipeline stage ABC so all stages have a consistent interface for composition.",
+      "acceptanceCriteria": [
+        "asre/pipeline/runner.py defines PipelineStage ABC with run(batch: EventBatch, context: PipelineContext) -> EventBatch method",
+        "PipelineContext holds: run_id, config, mode (full/incremental), metrics collector",
+        "Unit test verifies a dummy stage implementation works",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Scaffold dbt project for PostgreSQL",
+      "description": "As a developer, I need a dbt project configured for local PostgreSQL development.",
+      "acceptanceCriteria": [
+        "dbt_project/dbt_project.yml with project name asre",
+        "dbt_project/profiles.yml targeting local PostgreSQL",
+        "Directory structure: models/staging/, models/intermediate/, models/marts/",
+        "dbt debug passes against local Postgres",
+        ".gitkeep files in empty model directories",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Set up test infrastructure",
+      "description": "As a developer, I need pytest configured with golden-file support and test fixtures.",
+      "acceptanceCriteria": [
+        "tests/conftest.py with shared fixtures (sample CanonicalEvent, sample Encounter, sample EventBatch)",
+        "tests/unit/ and tests/integration/ directories exist",
+        "pytest-syrupy configured for snapshot testing",
+        "pytest runs successfully (even with zero test files initially)",
+        "Makefile or script with common test commands",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Define global config Pydantic schema",
+      "description": "As a developer, I need typed config models so invalid configurations are caught at load time.",
+      "acceptanceCriteria": [
+        "asre/config/schema.py defines Pydantic models for all sections of SPEC \u00a74.2: CustomerConfig, WarehouseConfig, ScheduleConfig, EncounterStitchingConfig, DeduplicationConfig, ReconciliationConfig, EpisodeStitchingConfig, FacilityNormalizationConfig, ConfidenceScoringConfig, AlertingConfig, GlobalConfig",
+        "All fields have proper types and defaults matching SPEC defaults",
+        "Unit tests verify valid config loads and invalid config raises ValidationError",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Define source config Pydantic schema",
+      "description": "As a developer, I need typed models for per-source mapping configs (ADT, claims, auth).",
+      "acceptanceCriteria": [
+        "Pydantic models for source configs per SPEC \u00a74.1: SourceDefinition, FieldMappings, EventTypeRules, PairedEvents, PatientClassRules, AuthStatusMap, FiltersConfig, SourceConfig",
+        "Source type validation: type must be one of adt, claims, auth",
+        "Claims sources must have paired_events defined",
+        "Auth sources must have auth_status_map defined",
+        "Unit tests for each source type (ADT, claims, auth)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Define facility alias config schema",
+      "description": "As a developer, I need a schema for the facility aliases YAML file.",
+      "acceptanceCriteria": [
+        "Pydantic model for facility alias config per SPEC \u00a77.4: FacilityAlias (canonical_id, canonical_name, npi, ccn, aliases list) and FacilityAliasConfig (facilities list)",
+        "Unit test verifies valid and invalid alias configs",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Implement YAML config loader with env var substitution",
+      "description": "As a developer, I need to load customer configs from the filesystem with env var substitution.",
+      "acceptanceCriteria": [
+        "asre/config/loader.py provides load_config(config_path: str, customer_id: str) -> GlobalConfig",
+        "Discovers and loads config.yaml from <config_path>/<customer_id>/",
+        "Discovers and loads all sources/*.yaml files",
+        "Discovers and loads facility_aliases.yaml if present",
+        "${ENV_VAR} patterns in YAML values are substituted from environment",
+        "Missing env var raises clear error with the variable name",
+        "Returns fully validated GlobalConfig with attached source configs",
+        "Unit tests: valid load, missing file, missing env var, malformed YAML",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Create example customer config",
+      "description": "As a developer, I need a complete example config for use in all subsequent PRD tests.",
+      "acceptanceCriteria": [
+        "customer_config/test_customer/config.yaml with all sections populated per SPEC \u00a74.2",
+        "customer_config/test_customer/sources/adt_vendor_x.yaml per SPEC \u00a74.1 ADT example",
+        "customer_config/test_customer/sources/claims_clearinghouse.yaml per SPEC \u00a74.1 claims example",
+        "customer_config/test_customer/sources/auth_portal.yaml per SPEC \u00a74.1 auth example",
+        "customer_config/test_customer/facility_aliases.yaml with sample facilities",
+        "All example configs pass validation",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Implement CLI skeleton",
+      "description": "As a developer, I need a CLI entry point so I can run ASRE commands.",
+      "acceptanceCriteria": [
+        "asre/cli/main.py uses Click framework",
+        "asre validate-config loads and validates config, prints success or errors",
+        "asre test-connection placeholder (prints 'not yet implemented')",
+        "asre with no args shows help",
+        "CLI reads ASRE_CONFIG_PATH and ASRE_CUSTOMER_ID from environment or --config-path / --customer-id flags",
+        "Entry point registered in pyproject.toml so asre command works after install",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Define IngestAdapter interface",
+      "description": "As a developer, I need an abstract adapter interface so warehouse implementations are swappable.",
+      "acceptanceCriteria": [
+        "asre/ingest/base.py defines IngestAdapter ABC with methods: connect(), disconnect(), read_source(), get_watermark(), set_watermark(), execute_ddl(), write_records()",
+        "Unit test verifies interface is abstract (cannot instantiate directly)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Implement PostgreSQL adapter",
+      "description": "As a developer, I need a Postgres adapter so I can develop and test locally.",
+      "acceptanceCriteria": [
+        "asre/ingest/postgres.py implements IngestAdapter using SQLAlchemy + psycopg2",
+        "connect() establishes connection using config credentials",
+        "read_source() executes SELECT against configured table",
+        "Handles connection errors gracefully with clear error messages",
+        "Integration test: create test table in Postgres, read records back",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Implement full mode ingest",
+      "description": "As a developer, I need full mode to read all records from source tables.",
+      "acceptanceCriteria": [
+        "When mode=full, read_source reads all records from the source table",
+        "No watermark filtering applied in full mode",
+        "filters.exclude rules are still applied",
+        "Integration test: insert 100 records, full ingest returns all non-excluded records",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Implement incremental mode with lookback buffer",
+      "description": "As a developer, I need incremental mode to read only new/changed records with configurable lookback.",
+      "acceptanceCriteria": [
+        "When mode=incremental, filter by incremental_key > last_watermark - lookback_buffer",
+        "Lookback buffer resolved per source type: ADT uses schedule.lookback_buffer.adt, claims uses schedule.lookback_buffer.claims, etc.",
+        "Falls back to schedule.lookback_buffer.default if source type not configured",
+        "If no watermark exists (first run), behaves like full mode",
+        "Integration test: insert records at various timestamps, verify only correct window returned",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Implement source_record_id dedup on ingest",
+      "description": "As a developer, I need ingest-time dedup so re-processing the same source data is idempotent.",
+      "acceptanceCriteria": [
+        "Duplicate source_record_id values within the same batch are collapsed to one record",
+        "The first occurrence (by source ordering) is kept",
+        "Dedup count is tracked in stage metrics",
+        "Integration test: insert records with duplicate source_record_ids, verify dedup",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Implement exclude filters",
+      "description": "As a developer, I need to apply exclude rules to skip irrelevant records during ingest.",
+      "acceptanceCriteria": [
+        "filters.exclude expression from source config is applied as a WHERE NOT clause",
+        "Supports SQL-like expressions (e.g., hl7_event IN ('A08', 'A31'))",
+        "Records matching exclude filter are not returned",
+        "Integration test: insert records with A01 and A08 events, verify A08 excluded",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Implement watermark management",
+      "description": "As a developer, I need watermark persistence so incremental runs know where to resume.",
+      "acceptanceCriteria": [
+        "Watermarks stored in asre_metadata table (key-value)",
+        "get_watermark(source_name) retrieves last watermark for a source",
+        "set_watermark(source_name, timestamp) updates the watermark",
+        "Watermarks are per-source (different sources have different watermarks)",
+        "Integration test: set watermark, retrieve it, verify value",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Implement IngestStage",
+      "description": "As a developer, I need the ingest stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/ingest/stage.py defines IngestStage implementing PipelineStage",
+        "Iterates over all configured sources",
+        "Returns raw records as list of dicts (not yet canonical events)",
+        "Records stage metrics: records_in (from source), records_out (after dedup/filter), errors",
+        "Preserves _raw_payload as the original source record dict",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "Implement basic migration infrastructure",
+      "description": "As a developer, I need schema migration support so tables are created automatically.",
+      "acceptanceCriteria": [
+        "asre/migration/migrator.py provides Migrator class",
+        "Checks asre_metadata for schema_version; creates table if missing",
+        "Discovers migration scripts in asre/migration/versions/ ordered by filename prefix",
+        "Runs pending migrations (version > current schema_version)",
+        "asre/migration/versions/001_initial_schema.py creates asre_metadata and watermark tracking",
+        "Integration test: run migrator on empty database, verify tables created",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "Implement field mapper",
+      "description": "As a developer, I need to map source columns to canonical event fields using config-defined mappings.",
+      "acceptanceCriteria": [
+        "asre/canonicalize/mapper.py defines FieldMapper class",
+        "Takes raw record dict + FieldMappings config",
+        "Maps each configured source column to its canonical field",
+        "Generates event_id as UUID for each canonical event",
+        "Sets ingested_at to current timestamp",
+        "Sets batch_id from pipeline context",
+        "Sets source_system from source config name",
+        "Unmapped optional fields are set to None",
+        "Unit test: ADT record mapped correctly with all fields",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Implement event type resolver for ADT",
+      "description": "As a developer, I need to resolve HL7 event types + patient class into normalized ASRE event types.",
+      "acceptanceCriteria": [
+        "asre/canonicalize/event_type_resolver.py defines EventTypeResolver class",
+        "Implements conditional mapping: A01+IP->ADMIT, A01+OBS->OBS_START, A01+ED->ED_ARRIVAL, A03->DISCHARGE, A03+ED->ED_DEPARTURE, A03+OBS->OBS_END, A02->TRANSFER_IN, A06->OBS_TO_IP, A11->CANCEL_ADMIT, A13->CANCEL_DISCHARGE",
+        "Sets admit_flag and discharge_flag based on config expressions",
+        "All 16 event types from SPEC \u00a73.3 are supported",
+        "Unit tests for each event type mapping",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "Implement paired event emission for claims",
+      "description": "As a developer, I need claims rows to produce two canonical events (admit + discharge).",
+      "acceptanceCriteria": [
+        "When source config has paired_events, one source row emits two CanonicalEvents",
+        "Admit event: uses paired_events.admit.event_ts column, event_type=CLAIM_ADMIT, admit_flag=True",
+        "Discharge event: uses paired_events.discharge.event_ts column, event_type=CLAIM_DISCHARGE, discharge_flag=True",
+        "Both events share the same source_record_id, patient_key, facility_raw",
+        "Each event gets its own unique event_id",
+        "Unit test: one claims row produces two canonical events with correct types and timestamps",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Implement patient class resolution for claims",
+      "description": "As a developer, I need to derive patient_class from claims bill type codes.",
+      "acceptanceCriteria": [
+        "When source config has patient_class_rules, evaluate conditions in order",
+        "First matching condition sets patient_class on the canonical event",
+        "Conditions support SQL-like expressions (e.g., bill_type_code LIKE '11%')",
+        "If no condition matches, patient_class is null",
+        "Unit test: bill_type_code '111' -> inpatient, '131' -> outpatient, '999' -> null",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "Implement diagnosis code mapping",
+      "description": "As a developer, I need to map claims diagnosis fields to canonical format.",
+      "acceptanceCriteria": [
+        "Maps principal_diagnosis field from source to canonical event",
+        "Maps admitting_diagnosis if configured",
+        "Maps diagnosis_codes field \u2014 handles both JSON array and delimited string formats",
+        "Each diagnosis code becomes a DiagnosisCode object with code, type, sequence, poa",
+        "Unit test: claims row with multiple diagnoses produces correct DiagnosisCode list",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-032",
+      "title": "Implement auth status mapping",
+      "description": "As a developer, I need to map auth status codes to standardized values.",
+      "acceptanceCriteria": [
+        "When source config has auth_status_map, map source status code to canonical value",
+        "Maps to: approved, denied, pending, modified (per SPEC \u00a74.1 auth example)",
+        "Derives event_type from mapped status: approved -> AUTH_APPROVED, denied -> AUTH_DENIED, pending -> AUTH_REQUESTED",
+        "Sets auth_flag = True on all auth events",
+        "Unit test: auth record with status 'A' -> auth_status=approved, event_type=AUTH_APPROVED",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 32,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "Implement error tolerance for unparseable records",
+      "description": "As a developer, I need the canonicalize stage to skip bad records without blocking the pipeline.",
+      "acceptanceCriteria": [
+        "If a required field (patient_key, event_ts) is missing or null, the record is skipped",
+        "Skipped records are logged with error details (source_record_id, reason)",
+        "Skipped records are counted in stage metrics as errors",
+        "Pipeline continues processing remaining records",
+        "Unit test: batch with 10 records, 2 with missing patient_key produces 8 canonical events + 2 errors",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 33,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "Implement CanonicalizeStage",
+      "description": "As a developer, I need the canonicalize stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/canonicalize/stage.py defines CanonicalizeStage implementing PipelineStage",
+        "Processes raw record dicts from ingest stage",
+        "Routes records to correct mapping logic based on source type (ADT, claims, auth)",
+        "Returns EventBatch with all canonical events",
+        "Records stage metrics: records_in, records_out (including paired expansion), errors",
+        "Unit test: mixed batch of ADT + claims + auth records produces correct canonical events",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 34,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "Implement string normalization pipeline",
+      "description": "As a developer, I need to normalize facility name strings so variant spellings match correctly.",
+      "acceptanceCriteria": [
+        "asre/facility/normalizer.py defines FacilityNormalizer class",
+        "Pipeline steps (in order): uppercase, strip punctuation, expand abbreviations, remove generic suffixes, normalize whitespace",
+        "Abbreviation expansion uses configurable dictionary per SPEC \u00a77.2 (MED CTR -> MEDICAL CENTER, HOSP -> HOSPITAL, etc.)",
+        "Generic suffixes removed: HOSPITAL, MEDICAL CENTER, HEALTH SYSTEM, HEALTH, CLINIC, CENTER (only trailing organizational suffixes)",
+        "Directional tokens PRESERVED: EAST, WEST, NORTH, SOUTH",
+        "Campus tokens PRESERVED: MAIN, DOWNTOWN, CAMPUS, MIDTOWN, UPTOWN",
+        "Unit tests: 'St. Mary's Med Ctr - East Campus' -> 'ST MARYS EAST CAMPUS', 'Memorial Regional Hospital' -> 'MEMORIAL REGIONAL', 'Good Samaritan Hosp - West' -> 'GOOD SAMARITAN WEST', 'University Health System' -> 'UNIVERSITY', 'North Valley Medical Center' -> 'NORTH VALLEY'",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 35,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "Implement exact alias matching",
+      "description": "As a developer, I need exact matching against known facility aliases.",
+      "acceptanceCriteria": [
+        "asre/facility/matcher.py defines FacilityMatcher class",
+        "Loads facility aliases from FacilityAliasConfig into an in-memory lookup",
+        "Exact match: normalized input string matches any alias returns canonical_id",
+        "Case-insensitive comparison (both sides normalized)",
+        "Unit test: 'ST MARYS MEDICAL CTR' matches alias and returns FAC_001",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 36,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-037",
+      "title": "Implement NPI/CCN matching",
+      "description": "As a developer, I need to match facilities by NPI or CCN when available in source data.",
+      "acceptanceCriteria": [
+        "If source record includes NPI, match directly against registry NPI field",
+        "If source record includes CCN, match directly against registry CCN field",
+        "NPI/CCN match takes precedence over fuzzy match but not exact alias match",
+        "Unit test: record with NPI '1234567890' matches facility with that NPI",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 37,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "title": "Implement fuzzy matching",
+      "description": "As a developer, I need fuzzy matching as a fallback when exact and NPI/CCN matching fail.",
+      "acceptanceCriteria": [
+        "Uses rapidfuzz token_sort_ratio for fuzzy comparison",
+        "Compares normalized input against all known facility names and aliases",
+        "Accepts match if score >= fuzzy_threshold (default 0.85)",
+        "If multiple facilities score above threshold, selects highest score",
+        "Logs match score for audit",
+        "Unit test: 'ST MARYS EAST' fuzzy matches 'ST MARYS EAST CAMPUS' above threshold",
+        "Unit test: 'COMPLETELY DIFFERENT NAME' does not match at threshold 0.85",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 38,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "Handle unresolved facilities",
+      "description": "As a developer, I need to create new facility records when no match is found and flag for review.",
+      "acceptanceCriteria": [
+        "When no match found at any tier: create new facility record",
+        "New facility gets auto-generated facility_canonical_id",
+        "Facility marked with flag FACILITY_NEW_UNREVIEWED",
+        "New facility's normalized name becomes its first alias",
+        "Subsequent events with same normalized name match the new facility (don't create duplicates)",
+        "Unit test: unknown facility creates new record; second event with same name reuses it",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 39,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "Implement facility registry",
+      "description": "As a developer, I need a registry that stores canonical facilities with aliases, NPI, CCN, and facility type.",
+      "acceptanceCriteria": [
+        "asre/facility/registry.py defines FacilityRegistry class",
+        "Loads initial data from facility_aliases.yaml",
+        "In-memory index keyed by: normalized alias strings, NPI, CCN",
+        "Supports adding new facilities and aliases at runtime",
+        "Can persist to database table (asre_facility_registry)",
+        "Tracks facility_type: acute, ltach, snf, rehab, psych, ed_standalone",
+        "Unit test: load registry, lookup by alias, lookup by NPI, add new facility",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 40,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "Implement FacilityNormalizationStage",
+      "description": "As a developer, I need the facility normalization stage to plug into the pipeline.",
+      "acceptanceCriteria": [
+        "asre/facility/stage.py defines FacilityNormalizationStage implementing PipelineStage",
+        "Processes each canonical event: normalizes facility_raw, matches, sets facility_canonical_id",
+        "Updates facility registry with any new facilities",
+        "Records stage metrics: matched (exact, npi, fuzzy, new), errors",
+        "Unit test: batch of events with various facility names produces correct canonical IDs assigned",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 41,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-042",
+      "title": "Add facility CLI commands",
+      "description": "As a developer, I need CLI commands to manage unresolved facilities.",
+      "acceptanceCriteria": [
+        "asre facilities --unresolved lists facilities flagged FACILITY_NEW_UNREVIEWED",
+        "asre facilities resolve <id> maps unresolved facility to existing canonical ID (placeholder for manual resolution workflow)",
+        "Commands read from facility registry in database",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 42,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "title": "Basic encounter stitching",
+      "description": "As a developer, I need events grouped into encounters by patient, facility, and time window.",
+      "acceptanceCriteria": [
+        "asre/stitch/encounter_stitcher.py defines EncounterStitcher class",
+        "Partitions events by patient_key",
+        "Sorts by event_ts ascending",
+        "Tiebreaker for identical event_ts: source type priority from config same_timestamp_tiebreaker (default: claims > ADT > auth)",
+        "Events within time_window_hours (default 48) of current encounter's last event AND same facility stitch into same encounter",
+        "Events outside time window OR different facility close current encounter, start new",
+        "Unit tests: Two ADT events 4 hours apart at same facility produce one encounter",
+        "Unit tests: Two ADT events 72 hours apart at same facility produce two encounters",
+        "Unit tests: Two ADT events 4 hours apart at different facilities produce two encounters",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 43,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-044",
+      "title": "Facility matching requirement for stitching",
+      "description": "As a developer, I need configurable facility matching so events at different facilities create separate encounters.",
+      "acceptanceCriteria": [
+        "When facility_must_match = true (default), events must share facility_canonical_id to stitch",
+        "When facility_must_match = false, facility is ignored during stitching (time window only)",
+        "Null facility_canonical_id: treated as non-matching (events with unresolved facilities don't auto-stitch)",
+        "Unit test: facility_must_match=true produces separate encounters for different facilities",
+        "Unit test: facility_must_match=false produces same encounter regardless of facility",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 44,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-045",
+      "title": "ED to IP merge",
+      "description": "As a developer, I need ED arrival followed by inpatient admission at the same facility to merge into a single encounter.",
+      "acceptanceCriteria": [
+        "ED_ARRIVAL + ADMIT at same facility within time window produces single encounter",
+        "Encounter type = inpatient (IP takes precedence over ED)",
+        "ED events are kept as supporting events in the encounter",
+        "Based on patient_class_transitions: [{from: ed, to: inpatient, action: merge}]",
+        "Unit test: ED_ARRIVAL at 10:00 + ADMIT at 14:00 same facility produces one encounter, type=inpatient",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 45,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-046",
+      "title": "OBS to IP conversion",
+      "description": "As a developer, I need observation-to-inpatient conversions to merge into a single encounter with a flag.",
+      "acceptanceCriteria": [
+        "OBS_START + OBS_TO_IP at same facility within time window produces single encounter",
+        "Sets obs_to_ip_conversion = true on the encounter",
+        "Encounter type = inpatient",
+        "Based on patient_class_transitions: [{from: observation, to: inpatient, action: merge}]",
+        "Unit test: OBS_START + OBS_TO_IP produces one encounter with obs_to_ip_conversion=true",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 46,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-047",
+      "title": "IP to IP as new encounter",
+      "description": "As a developer, I need same-day inpatient readmission at the same facility to create a new encounter (not merge).",
+      "acceptanceCriteria": [
+        "DISCHARGE + new ADMIT (both IP) at same facility within time window produces two separate encounters",
+        "Based on patient_class_transitions: [{from: inpatient, to: inpatient, action: new_encounter}]",
+        "Unit test: IP discharge at 10:00 + IP admit at 14:00 same facility produces two encounters",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 47,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-048",
+      "title": "Transfer chain detection",
+      "description": "As a developer, I need to detect and link encounters across facilities when transfers occur.",
+      "acceptanceCriteria": [
+        "Discharge from Facility A within time_window_hours of admit at Facility B produces transfer chain",
+        "Each facility segment is its own encounter (separate encounter_ids)",
+        "Both encounters' transfer_chain array contains both encounter_ids, ordered by time",
+        "Supports multi-hop transfers: A to B to C produces three encounters, all linked",
+        "Unit test: discharge at Facility A, admit at Facility B 2 hours later produces two encounters linked in transfer_chain",
+        "Unit test: A to B to C chain produces three encounters, all share same transfer_chain array",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 48,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-049",
+      "title": "Handle cancellation events",
+      "description": "As a developer, I need cancellation events to update encounter status correctly.",
+      "acceptanceCriteria": [
+        "CANCEL_ADMIT: marks encounter status = cancelled",
+        "CANCEL_DISCHARGE: removes discharge_ts, sets status back to open (encounter reopened)",
+        "Cancel events are attached to the most recent matching encounter for the patient at that facility",
+        "Unit test: ADMIT + CANCEL_ADMIT produces encounter status=cancelled",
+        "Unit test: ADMIT + DISCHARGE + CANCEL_DISCHARGE produces encounter status=open, discharge_ts=null",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 49,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-050",
+      "title": "Deterministic encounter IDs",
+      "description": "As a developer, I need encounter IDs that are stable across re-processing runs.",
+      "acceptanceCriteria": [
+        "encounter_id = hash(patient_key + facility_canonical_id + first_admit_source_record_id)",
+        "Same inputs always produce same encounter_id (verified across runs)",
+        "Hash function produces a URL-safe string (e.g., SHA-256 hex digest, truncated)",
+        "Unit test: same patient + facility + source_record_id produces same encounter_id every time",
+        "Unit test: different source_record_id produces different encounter_id",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 50,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-051",
+      "title": "Set encounter metadata",
+      "description": "As a developer, I need each encounter to have correctly derived metadata fields.",
+      "acceptanceCriteria": [
+        "encounter_type derived from events: inpatient, observation, ed_only, outpatient (If any IP event then inpatient; If OBS events but no IP then observation; If only ED events then ed_only; Otherwise outpatient)",
+        "status: open (no discharge), closed (has discharge), cancelled",
+        "admit_ts: earliest admit/arrival event timestamp",
+        "discharge_ts: latest discharge event timestamp (null if open)",
+        "los_hours: discharge_ts - admit_ts in hours (null if open)",
+        "source_event_ids: list of all canonical event_ids in encounter",
+        "source_systems: distinct source_system values from events",
+        "has_adt, has_claims, has_auth: derived from source_systems",
+        "Unit test: encounter with ADT admit + claims discharge produces has_adt=true, has_claims=true, has_auth=false",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 51,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-052",
+      "title": "Implement StitchStage",
+      "description": "As a developer, I need the stitch stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/stitch/stage.py defines StitchStage implementing PipelineStage",
+        "Processes EventBatch of canonical events and produces list of Encounters",
+        "Records stage metrics: events_in, encounters_out, transfers_detected, cancellations_processed",
+        "Unit test: full batch processing end-to-end",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 52,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-053",
+      "title": "Identify duplicate events within encounter",
+      "description": "As a developer, I need to find events that match on configured fields within a time tolerance.",
+      "acceptanceCriteria": [
+        "asre/dedup/deduplicator.py defines Deduplicator class",
+        "Within each encounter, compares events pairwise on match_fields (default: patient_key, event_type, facility_canonical_id)",
+        "Events matching on all fields AND within time_tolerance_minutes (default: 30) are duplicates",
+        "Unit test: two ADMIT events 15 minutes apart at same facility are duplicates",
+        "Unit test: two ADMIT events 45 minutes apart at same facility are not duplicates",
+        "Unit test: ADMIT and DISCHARGE 15 minutes apart are not duplicates (different event_type)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 53,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-054",
+      "title": "Resolve duplicates by source priority",
+      "description": "As a developer, I need to keep the highest-priority source event when duplicates are found.",
+      "acceptanceCriteria": [
+        "When duplicates found, keep the event from the highest timestamp_priority source",
+        "Priority from config: e.g., ADT=100 > claims=80 > auth=40",
+        "If same source: keep the earliest ingested record (by ingested_at)",
+        "Unit test: ADT event (priority 100) + claims event (priority 80) as duplicates keeps ADT",
+        "Unit test: two ADT events keeps the one with earlier ingested_at",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 54,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-055",
+      "title": "Mark duplicates for audit",
+      "description": "As a developer, I need duplicates retained in the detail table with a duplicate role.",
+      "acceptanceCriteria": [
+        "Duplicate events are NOT deleted -- they remain in the event list",
+        "Duplicate events have role_in_encounter = 'duplicate' set for the detail table",
+        "The kept event retains its original role (admit_anchor, discharge_anchor, supporting)",
+        "Unit test: after dedup, duplicate events have role='duplicate', kept event has original role",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 55,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-056",
+      "title": "Encounter-level dedup",
+      "description": "As a developer, I need to merge overlapping encounters for the same patient at the same facility.",
+      "acceptanceCriteria": [
+        "Two encounters for same patient + same facility with overlapping time ranges merge into one",
+        "Overlapping = encounter A's time range overlaps with encounter B's time range",
+        "Merged encounter takes the earlier admit_ts and later discharge_ts",
+        "All events from both encounters are combined",
+        "Merged encounter_id uses the earlier encounter's ID (stability)",
+        "Unit test: two overlapping encounters merge into one with combined events",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 56,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-057",
+      "title": "Implement DedupStage",
+      "description": "As a developer, I need the dedup stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/dedup/stage.py defines DedupStage implementing PipelineStage",
+        "Processes list of encounters and returns deduplicated encounters",
+        "Records stage metrics: events_before, events_after, duplicates_found, encounters_merged",
+        "Unit test: batch with known duplicates produces correct dedup results",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 57,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-058",
+      "title": "Timestamp selection by source priority",
+      "description": "As a developer, I need encounter timestamps selected from the most trusted source.",
+      "acceptanceCriteria": [
+        "asre/reconcile/reconciler.py defines Reconciler class",
+        "admit_ts is set from the source with highest timestamp_priority (default: ADT=100, claims=80, auth=40)",
+        "discharge_ts is set from the source with highest timestamp_priority",
+        "admit_source_priority records which source provided admit_ts (e.g., adt)",
+        "discharge_source_priority records which source provided discharge_ts",
+        "Unit test: encounter with ADT admit at 10:00 and claims admit at 10:30 produces admit_ts=10:00 (ADT), admit_source_priority=adt",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 58,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-059",
+      "title": "Classification resolution by source priority",
+      "description": "As a developer, I need encounter type, DRG, payer, and diagnoses from the most trusted classification source.",
+      "acceptanceCriteria": [
+        "encounter_type is set from the source with highest classification_priority (default: claims=100, ADT=80, auth=40)",
+        "drg is set from claims when available",
+        "payer_id is set from highest classification priority source",
+        "principal_diagnosis is set from claims when available",
+        "admitting_diagnosis is set from ADT when available",
+        "diagnosis_codes aggregated from all sources with claims taking precedence",
+        "Unit test: ADT says observation, claims says inpatient produces encounter_type=inpatient (claims priority)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 59,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-060",
+      "title": "Auth reconciliation rules",
+      "description": "As a developer, I need auth signals to validate encounters without anchoring them.",
+      "acceptanceCriteria": [
+        "Auth events are never used as the anchor for encounter creation",
+        "Auth has lowest priority for both timestamps and classification",
+        "If auth exists with matching encounter: noted as supporting signal (used by confidence scorer)",
+        "If auth exists with NO matching encounter: flag AUTH_WITHOUT_ADMIT",
+        "Unit test: encounter with auth + ADT produces auth not overriding any fields",
+        "Unit test: orphan auth signal produces AUTH_WITHOUT_ADMIT flag",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 60,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-061",
+      "title": "Flag timestamp mismatches",
+      "description": "As a developer, I need mismatches between sources flagged for quality tracking.",
+      "acceptanceCriteria": [
+        "TIMESTAMP_MISMATCH: ADT and claims admit timestamps differ by more than timestamp_tolerance_hours (default 24)",
+        "Flag is added to encounter's confidence_flags array",
+        "Tolerance is configurable per customer",
+        "Unit test: ADT admit 10:00 Jan 1, claims admit 15:00 Jan 2 (29h diff) with tolerance 24h produces TIMESTAMP_MISMATCH",
+        "Unit test: ADT admit 10:00, claims admit 11:00 (1h diff) produces no flag",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 61,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-062",
+      "title": "Flag missing event patterns",
+      "description": "As a developer, I need common data quality issues flagged automatically.",
+      "acceptanceCriteria": [
+        "MISSING_DISCHARGE: admit event present but no discharge event (and encounter open > 48h)",
+        "ORPHAN_DISCHARGE: discharge event with no matching admit event",
+        "CLAIMS_ONLY_ENCOUNTER: encounter has claims events but zero ADT events",
+        "ADT_ONLY_ENCOUNTER: encounter has ADT events but zero claims (beyond expected claims lag)",
+        "AUTH_WITHOUT_ADMIT: auth signal with no matching encounter",
+        "Each flag added to encounter's confidence_flags array",
+        "Unit tests for each flag condition",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 62,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-063",
+      "title": "Implement ReconcileStage",
+      "description": "As a developer, I need the reconcile stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/reconcile/stage.py defines ReconcileStage implementing PipelineStage",
+        "Processes list of encounters and returns reconciled encounters",
+        "Records stage metrics: encounters_reconciled, flags_generated (by type), auth_without_admit_count",
+        "Unit test: batch with mixed-source encounters produces correct reconciliation",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 63,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-064",
+      "title": "Base confidence score computation",
+      "description": "As a developer, I need a weighted sum of binary signals normalized to [0, 1].",
+      "acceptanceCriteria": [
+        "asre/score/confidence_scorer.py defines ConfidenceScorer class",
+        "Computes: base_score = sum(signal_i * weight_i) / sum(weight_i)",
+        "7 signals with default weights: HAS_CLAIMS (30), HAS_ADT_ADMIT (20), HAS_ADT_DISCHARGE (10), HAS_AUTH (10), FACILITY_RESOLVED (5), TIMESTAMPS_CONSISTENT (15), PATIENT_CLASS_CONSISTENT (10)",
+        "Maximum raw score = 100, normalized to 1.0",
+        "Unit test: all signals present produces score = 1.0",
+        "Unit test: only HAS_CLAIMS produces score = 30/100 = 0.30",
+        "Unit test: HAS_CLAIMS + HAS_ADT_ADMIT produces score = 50/100 = 0.50",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 64,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-065",
+      "title": "Penalty application to confidence score",
+      "description": "As a developer, I need penalty flags to reduce the base score.",
+      "acceptanceCriteria": [
+        "9 penalties with default values: MISSING_DISCHARGE (-0.15), ORPHAN_DISCHARGE (-0.20), TIMESTAMP_MISMATCH (-0.10), CLAIMS_ONLY_ENCOUNTER (-0.10), STALE_OPEN_ENCOUNTER (-0.20), DUPLICATE_DETECTED (-0.05), FACILITY_UNRESOLVED (-0.10), AUTH_WITHOUT_ADMIT (-0.05), CANCELLED_AND_REOPENED (-0.05)",
+        "Penalties are subtracted from base score",
+        "Final score floored at 0.0 (never negative)",
+        "Unit test: base score 0.50 with MISSING_DISCHARGE produces 0.35",
+        "Unit test: base score 0.20 with ORPHAN_DISCHARGE(-0.20) + FACILITY_UNRESOLVED(-0.10) produces 0.0 (floored)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 65,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-066",
+      "title": "Populate confidence_flags array",
+      "description": "As a developer, I need the encounter to list all flags that affected its score.",
+      "acceptanceCriteria": [
+        "confidence_flags contains names of all active signals AND all applied penalties",
+        "Positive signals included when signal = 1 (e.g., HAS_CLAIMS)",
+        "Penalty flags included when penalty applied (e.g., MISSING_DISCHARGE)",
+        "Unit test: encounter with claims + missing discharge produces flags including both HAS_CLAIMS and MISSING_DISCHARGE",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 66,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-067",
+      "title": "Stale encounter detection",
+      "description": "As a developer, I need facility-type-aware stale encounter thresholds.",
+      "acceptanceCriteria": [
+        "STALE_OPEN_ENCOUNTER flag applied when encounter is open (no discharge) AND open duration exceeds facility-type threshold",
+        "Default thresholds: acute (30 days), ed_standalone (3 days), ltach (90 days), snf (120 days), rehab (60 days), psych (90 days), default (30 days)",
+        "Threshold selected based on facility's facility_type from registry",
+        "If facility_type unknown, use default threshold",
+        "Unit test: acute facility, open 31 days produces STALE_OPEN_ENCOUNTER",
+        "Unit test: SNF, open 100 days produces no stale flag (threshold 120)",
+        "Unit test: unknown facility type, open 31 days produces STALE_OPEN_ENCOUNTER (default 30)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 67,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-068",
+      "title": "Implement ScoreStage",
+      "description": "As a developer, I need the scoring stage to plug into the pipeline runner.",
+      "acceptanceCriteria": [
+        "asre/score/stage.py defines ScoreStage implementing PipelineStage",
+        "Processes list of encounters and returns scored encounters",
+        "Records stage metrics: encounters_scored, avg_score, score_distribution (high/medium/low/very_low counts)",
+        "Unit test: batch scoring with mixed-quality encounters",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 68,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-069",
+      "title": "Implement pipeline orchestrator",
+      "description": "As a developer, I need all stages run in sequence with proper context passing.",
+      "acceptanceCriteria": [
+        "asre/pipeline/runner.py defines PipelineRunner class",
+        "Sequences stages: Ingest, Canonicalize, Facility Normalize, Stitch, Dedup, Reconcile, Score, Materialize, Quality Check",
+        "Each stage receives PipelineContext with: run_id, config, mode, adapter, metrics",
+        "Run ID generated at start: run_{timestamp} format",
+        "Stage results pass to next stage (EventBatch to encounters to encounters)",
+        "Integration test: full pipeline run with synthetic data",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 69,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-070",
+      "title": "Implement stage checkpointing",
+      "description": "As a developer, I need intermediate results persisted so failed runs can resume.",
+      "acceptanceCriteria": [
+        "Each stage commits intermediate results to staging tables before next stage begins",
+        "Checkpoint state includes: run_id, last_completed_stage, intermediate data reference",
+        "Checkpoint stored in asre_metadata table",
+        "On resume: pipeline skips completed stages, loads intermediate results, continues from next stage",
+        "Integration test: fail pipeline at stage 5, resume with stages 1-4 skipped",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 70,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-071",
+      "title": "Implement resume support",
+      "description": "As a developer, I need asre run --resume <run_id> to continue from a failed run.",
+      "acceptanceCriteria": [
+        "--resume flag on asre run CLI command",
+        "Loads checkpoint for given run_id",
+        "Validates checkpoint exists and is resumable",
+        "Resumes from last completed stage + 1",
+        "Clear error if run_id not found or already completed",
+        "Unit test: resume logic with mock checkpoints",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 71,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-072",
+      "title": "Implement encounter materialization",
+      "description": "As a developer, I need encounters written to admission_events_unified via merge/upsert.",
+      "acceptanceCriteria": [
+        "Merge/upsert keyed on encounter_id",
+        "New encounters: INSERT with created_at set",
+        "Updated encounters: UPDATE with updated_at set",
+        "All fields from SPEC \u00a73.4 admission_events_unified populated",
+        "asre_version set to current engine version",
+        "Integration test: materialize encounters, verify table contents",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 72,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-073",
+      "title": "Implement encounters detail materialization",
+      "description": "As a developer, I need event-level detail written to asre_encounters_detail.",
+      "acceptanceCriteria": [
+        "Each event in an encounter gets a row in asre_encounters_detail",
+        "role_in_encounter set per event: admit_anchor, discharge_anchor, supporting, conflicting, duplicate",
+        "Admit anchor: the event that provides admit_ts",
+        "Discharge anchor: the event that provides discharge_ts",
+        "Supporting: events that corroborate but don't anchor",
+        "Duplicate: events marked as duplicates in dedup stage",
+        "Integration test: verify detail rows match encounter events",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 73,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-074",
+      "title": "Implement readmission detection",
+      "description": "As a developer, I need readmissions flagged on encounters.",
+      "acceptanceCriteria": [
+        "is_readmission = true when patient is admitted to any acute facility within 30 days of a prior discharge from an acute facility",
+        "readmission_days = days between prior discharge_ts and current admit_ts",
+        "readmission_days only populated when is_readmission = true",
+        "Only acute facilities count (check is_acute / facility_type)",
+        "First admission is never a readmission",
+        "Unit test: acute discharge Jan 1, acute admit Jan 15 produces is_readmission=true, readmission_days=14",
+        "Unit test: acute discharge Jan 1, SNF admit Jan 5 produces is_readmission=false (SNF not acute)",
+        "Unit test: acute discharge Jan 1, acute admit Feb 15 produces is_readmission=false (>30 days)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 74,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-075",
+      "title": "Implement audit logging",
+      "description": "As a developer, I need all encounter modifications tracked in asre_audit_log.",
+      "acceptanceCriteria": [
+        "Each encounter create/update generates an audit log entry",
+        "asre_audit_log fields: log_id, run_id, timestamp, action, entity_type, entity_id, detail",
+        "Actions: ingest, stitch, dedup, reconcile, score, normalize, materialize",
+        "Detail includes what changed (for updates: old value to new value)",
+        "Integration test: verify audit log entries after pipeline run",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 75,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-076",
+      "title": "Write run metrics",
+      "description": "As a developer, I need per-stage timing and throughput written to asre_run_metrics.",
+      "acceptanceCriteria": [
+        "After each stage, write a row to asre_run_metrics",
+        "Fields: run_id, stage_name, started_at, completed_at, records_in, records_out, errors, status",
+        "All 9 stages produce metrics rows",
+        "Integration test: verify run_metrics table has 9 rows after full pipeline run",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 76,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-077",
+      "title": "Implement error tolerance",
+      "description": "As a developer, I need the pipeline to tolerate individual event failures up to a threshold.",
+      "acceptanceCriteria": [
+        "Failed events are logged and excluded from downstream processing",
+        "failed_event_rate computed: failed_events / total_events",
+        "If failed_event_rate > failed_event_rate_fail threshold (from config), pipeline halts",
+        "Below threshold: pipeline continues, failures tracked in metrics",
+        "Unit test: 2% failure rate with 5% threshold produces pipeline continues",
+        "Unit test: 10% failure rate with 5% threshold produces pipeline halts",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 77,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-078",
+      "title": "Implement CLI diagnostic commands",
+      "description": "As a developer, I need CLI commands to inspect pipeline results.",
+      "acceptanceCriteria": [
+        "asre run --mode full runs full pipeline",
+        "asre run --mode incremental runs incremental pipeline",
+        "asre status shows last run status and summary",
+        "asre inspect run <run_id> shows per-stage metrics for a run",
+        "asre inspect encounter <id> shows encounter with all source events",
+        "asre inspect errors --last-run shows failed events from last run",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 78,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-079",
+      "title": "Create dbt mart models",
+      "description": "As a developer, I need dbt models that materialize the output tables.",
+      "acceptanceCriteria": [
+        "dbt_project/models/marts/admission_events_unified.sql \u2014 incremental model with merge on encounter_id",
+        "dbt_project/models/marts/asre_encounters_detail.sql",
+        "dbt_project/models/marts/asre_audit_log.sql",
+        "dbt_project/models/marts/asre_run_metrics.sql",
+        "Models compile and run against Postgres",
+        "dbt run succeeds after pipeline populates staging tables",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 79,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-080",
+      "title": "Create output table migrations",
+      "description": "As a developer, I need migration scripts to create all output tables.",
+      "acceptanceCriteria": [
+        "asre/migration/versions/003_output_tables.py creates: admission_events_unified, asre_encounters_detail, asre_audit_log, asre_run_metrics, asre_quality_metrics",
+        "Tables match SPEC \u00a73.4 schemas exactly",
+        "Migration is idempotent (re-running doesn't error)",
+        "Integration test: run migration on empty DB, verify tables exist with correct columns",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 80,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-081",
+      "title": "Implement quality metric computation",
+      "description": "As a developer, I need all quality metrics computed after each pipeline run.",
+      "acceptanceCriteria": [
+        "asre/quality/metrics.py defines QualityMetricComputer class",
+        "Computes all 11 metrics from SPEC \u00a78.2: duplicate_rate, missing_discharge_rate, reconciliation_mismatch_rate, low_confidence_rate, facility_unresolved_rate, auth_without_admit_rate, claims_only_rate, avg_confidence_score, events_ingested, encounters_created, encounters_updated, failed_event_rate",
+        "Each metric written to asre_quality_metrics table",
+        "Unit test: known encounter set produces correct metric values",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 81,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-082",
+      "title": "Implement threshold evaluation",
+      "description": "As a developer, I need each metric evaluated against warn and fail thresholds.",
+      "acceptanceCriteria": [
+        "Each metric compared against warn and fail thresholds from config",
+        "Status determined: pass (below warn), warn (between warn and fail), fail (above fail)",
+        "Status stored on each metric row in asre_quality_metrics",
+        "Thresholds per SPEC \u00a74.2: duplicate_rate_warn=0.05, duplicate_rate_fail=0.15, etc.",
+        "Unit test: metric 0.04 with warn=0.05 produces pass",
+        "Unit test: metric 0.08 with warn=0.05, fail=0.15 produces warn",
+        "Unit test: metric 0.20 with fail=0.15 produces fail",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 82,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-083",
+      "title": "Implement webhook alerting",
+      "description": "As a developer, I need webhook alerts fired when metrics breach thresholds.",
+      "acceptanceCriteria": [
+        "asre/quality/alerter.py defines Alerter class",
+        "Fires HTTP POST to configured webhook URL(s) when any metric status is warn or fail",
+        "Payload format per SPEC \u00a78.3 with run_id, run_ts, and alerts array containing metric, value, threshold, severity",
+        "Payload contains ZERO PHI \u2014 only aggregate metrics",
+        "Webhook failure (network error) is logged but does not block pipeline",
+        "Multiple channels supported (list of webhook URLs)",
+        "Unit test: mock webhook, verify payload structure",
+        "Unit test: verify no PHI in payload",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 83,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-084",
+      "title": "Implement dbt schema tests",
+      "description": "As a developer, I need dbt tests to validate output table integrity.",
+      "acceptanceCriteria": [
+        "dbt tests: unique on admission_events_unified.encounter_id",
+        "dbt tests: not_null on admission_events_unified.patient_key and admission_events_unified.admit_ts",
+        "dbt tests: accepted_values on admission_events_unified.status with [open, closed, cancelled]",
+        "dbt tests: accepted_values on admission_events_unified.encounter_type with [inpatient, observation, ed_only, outpatient]",
+        "dbt tests: relationships on asre_encounters_detail.encounter_id referencing admission_events_unified.encounter_id",
+        "Tests defined in dbt YAML schema files",
+        "dbt test passes on valid data",
+        "dbt test fails on intentionally invalid data",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 84,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-085",
+      "title": "Implement QualityCheckStage",
+      "description": "As a developer, I need the quality check stage to plug into the pipeline.",
+      "acceptanceCriteria": [
+        "asre/quality/stage.py defines QualityCheckStage implementing PipelineStage",
+        "Computes metrics, evaluates thresholds, fires alerts if needed",
+        "Updates watermark after successful completion",
+        "Records stage metrics",
+        "dbt model: dbt_project/models/marts/asre_quality_metrics.sql",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 85,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-086",
+      "title": "Implement episode stitching algorithm",
+      "description": "As a developer, I need to group encounters into episodes based on temporal and clinical linkage rules.",
+      "acceptanceCriteria": [
+        "asre/episode/episode_stitcher.py defines EpisodeStitcher class",
+        "Algorithm per SPEC \u00a79.2: query encounters per patient ordered by admit_ts, check linkage rules against prior encounters, link to existing episode or create new",
+        "Linkage rules (all windows configurable): readmission within readmission_window_days (default 30), post-acute linkage within post_acute_linkage_days (default 14), planned return within planned_return_days (default 90), ED bounce-back within ed_bounceback_days (default 7)",
+        "Unit tests for each linkage rule",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 86,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-087",
+      "title": "Implement readmission linkage",
+      "description": "As a developer, I need readmissions linked to the same episode as the index admission.",
+      "acceptanceCriteria": [
+        "Acute admit within 30 days of prior acute discharge produces same episode",
+        "Both encounters must involve acute facilities",
+        "Episode's includes_readmission = true",
+        "Unit test: discharge Jan 1, readmit Jan 15 produces same episode",
+        "Unit test: discharge Jan 1, readmit Feb 15 produces different episodes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 87,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-088",
+      "title": "Implement post-acute linkage",
+      "description": "As a developer, I need acute to post-acute transitions linked into the same episode.",
+      "acceptanceCriteria": [
+        "Acute discharge followed by SNF/LTACH/rehab admit within 14 days produces same episode",
+        "Episode's includes_post_acute = true",
+        "Facility type checked via facility registry",
+        "Unit test: acute discharge Jan 1, SNF admit Jan 5 produces same episode",
+        "Unit test: acute discharge Jan 1, SNF admit Jan 20 produces different episodes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 88,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-089",
+      "title": "Implement ED bounce-back linkage",
+      "description": "As a developer, I need ED visits shortly after discharge linked to the same episode.",
+      "acceptanceCriteria": [
+        "ED visit within 7 days of prior discharge produces same episode",
+        "Unit test: discharge Jan 1, ED visit Jan 4 produces same episode",
+        "Unit test: discharge Jan 1, ED visit Jan 10 produces different episodes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 89,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-090",
+      "title": "Generate deterministic episode IDs",
+      "description": "As a developer, I need episode IDs that are stable across re-processing.",
+      "acceptanceCriteria": [
+        "episode_id deterministically derived from the first encounter in the episode",
+        "Same encounters always produce same episode_id",
+        "Unit test: same encounter set produces same episode_id on repeated runs",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 90,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-091",
+      "title": "Implement condition grouper interface",
+      "description": "As a developer, I need a pluggable interface for episode type classification.",
+      "acceptanceCriteria": [
+        "asre/groupers/base.py defines ConditionGrouper ABC with abstract group(diagnosis_codes, drg) method returning episode type classification",
+        "Return values: surgical, medical, chronic_exacerbation, maternity, behavioral_health, unclassified",
+        "Unit test: verify interface is abstract",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 91,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-092",
+      "title": "Implement AHRQ CCS grouper",
+      "description": "As a developer, I need the default condition grouper using AHRQ CCS ICD-10 classifications.",
+      "acceptanceCriteria": [
+        "asre/groupers/ahrq_ccs.py implements ConditionGrouper",
+        "Loads CCS crosswalk data (ICD-10-CM to CCS category mapping)",
+        "Maps CCS categories to episode types: surgical, medical, chronic_exacerbation, maternity, behavioral_health, unclassified",
+        "DRG-based rules checked first (surgical DRGs, maternity DRGs, etc.)",
+        "asre/episode/condition_grouper.py dispatches: DRG rules first, then AHRQ CCS fallback",
+        "Unit test: hip replacement DRG produces surgical",
+        "Unit test: pneumonia ICD-10 produces medical",
+        "Unit test: unknown code produces unclassified",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 92,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-093",
+      "title": "Implement episode-level confidence scoring",
+      "description": "As a developer, I need episode confidence as a weighted mean of encounter scores.",
+      "acceptanceCriteria": [
+        "asre/episode/episode_scorer.py defines EpisodeScorer class",
+        "episode_confidence = sum(encounter_confidence_i * los_hours_i) / sum(los_hours_i) per SPEC \u00a79.4",
+        "Encounters with zero LOS (e.g., ED-only) use minimum weight of 1 hour",
+        "Unit test: two encounters (score 0.8, LOS 48h) and (score 0.6, LOS 24h) produces weighted mean",
+        "Unit test: ED-only encounter with zero LOS uses 1 hour weight",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 93,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-094",
+      "title": "Populate episode metadata",
+      "description": "As a developer, I need episode output fields populated correctly.",
+      "acceptanceCriteria": [
+        "All fields from SPEC \u00a73.4 asre_episodes populated: episode_id, patient_key, episode_type, episode_status, episode_start_ts, episode_end_ts, total_los_days, encounter_ids, encounter_count, facility_count, facility_sequence, includes_readmission, includes_post_acute, is_acute, principal_diagnosis, diagnosis_codes, confidence_score, created_at, updated_at",
+        "episode_status: active (any encounter open), closed (all closed), reopened",
+        "Unit test: multi-encounter episode produces all metadata correct",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 94,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-095",
+      "title": "Implement episode stages",
+      "description": "As a developer, I need episode stages that plug into the pipeline.",
+      "acceptanceCriteria": [
+        "EpisodeStitchStage: stitches encounters into episodes",
+        "EpisodeMaterializeStage: writes episodes to asre_episodes, updates episode_id FK on encounters",
+        "EpisodeQualityStage: computes episode-level metrics (episode count, readmission rate, mean confidence)",
+        "Stages integrate with pipeline runner as stages 10-12",
+        "dbt model: dbt_project/models/marts/asre_episodes.sql",
+        "dbt tests: unique on episode_id, relationships from admission_events_unified.episode_id",
+        "Migration: 004_episode_tables.py creates asre_episodes table",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 95,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-096",
+      "title": "Support independent episode recomputation",
+      "description": "As a developer, I need to recompute episodes without re-running the full pipeline.",
+      "acceptanceCriteria": [
+        "asre episodes --recompute CLI command runs only episode stages (10-12)",
+        "Reads from materialized admission_events_unified table",
+        "Does NOT re-run ingest, canonicalize, stitch, dedup, reconcile, score stages",
+        "Useful when episode rules change and need reprocessing",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 96,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-097",
+      "title": "Implement Snowflake adapter",
+      "description": "As a developer, I need a Snowflake adapter so ASRE runs in Snowflake customer environments.",
+      "acceptanceCriteria": [
+        "asre/ingest/snowflake.py implements IngestAdapter",
+        "Uses snowflake-connector-python",
+        "Handles VARIANT type for JSON columns (_raw_payload, diagnosis_codes)",
+        "Supports ARRAY type for list columns",
+        "test-connection validates Snowflake connectivity",
+        "All pipeline stages work end-to-end against Snowflake",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 97,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-098",
+      "title": "Implement BigQuery adapter",
+      "description": "As a developer, I need a BigQuery adapter for GCP customer environments.",
+      "acceptanceCriteria": [
+        "asre/ingest/bigquery.py implements IngestAdapter",
+        "Uses google-cloud-bigquery library",
+        "Handles STRUCT/JSON types for complex columns",
+        "Handles ARRAY type for list columns",
+        "test-connection validates BigQuery connectivity",
+        "All pipeline stages work end-to-end against BigQuery",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 98,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-099",
+      "title": "Implement Redshift adapter",
+      "description": "As a developer, I need a Redshift adapter for AWS customer environments.",
+      "acceptanceCriteria": [
+        "asre/ingest/redshift.py implements IngestAdapter",
+        "Uses redshift-connector library",
+        "Handles SUPER type for JSON columns",
+        "Handles VARCHAR(MAX) for large text fields",
+        "test-connection validates Redshift connectivity",
+        "All pipeline stages work end-to-end against Redshift",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 99,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-100",
+      "title": "Handle cross-warehouse dbt compatibility",
+      "description": "As a developer, I need dbt models that compile and run on all three warehouses.",
+      "acceptanceCriteria": [
+        "dbt profiles for Snowflake, BigQuery, and Redshift",
+        "Warehouse-specific SQL handled via dbt macros or Jinja conditionals: VARIANT/JSON/SUPER, ARRAY syntax, merge/upsert syntax, timestamp function differences",
+        "dbt compile --target snowflake|bigquery|redshift succeeds for all models",
+        "dbt test passes on all three targets",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 100,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-101",
+      "title": "Handle cross-warehouse migrations",
+      "description": "As a developer, I need migration scripts that work on all three warehouses.",
+      "acceptanceCriteria": [
+        "Migration scripts detect warehouse type from config",
+        "DDL uses warehouse-appropriate syntax (CREATE TABLE, column types)",
+        "Type mapping: VARIANT/JSON/SUPER, ARRAY/ARRAY/SUPER, TIMESTAMP_TZ/TIMESTAMP/TIMESTAMPTZ",
+        "All existing migrations (001-004) work on all three warehouses",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 101,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-102",
+      "title": "Create production Dockerfile",
+      "description": "As a DevOps engineer, I need a Docker image that packages ASRE for deployment.",
+      "acceptanceCriteria": [
+        "Dockerfile based on Python 3.11 slim image",
+        "Installs: ASRE package, dbt-core, all three warehouse adapters (dbt-snowflake, dbt-bigquery, dbt-redshift)",
+        "Includes AHRQ CCS grouper data files",
+        "Runs as non-root user (security requirement per SPEC \u00a714.2)",
+        "Entry point: asre CLI",
+        "docker build -t asre-engine:latest . succeeds",
+        "Image size < 500MB",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 102,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-103",
+      "title": "Implement auto-migration on startup",
+      "description": "As an operator, I need ASRE to automatically create/upgrade schema on startup.",
+      "acceptanceCriteria": [
+        "On startup, before pipeline execution, check schema version in asre_metadata",
+        "If asre_metadata doesn't exist: fresh install, run all migrations",
+        "If schema_version behind: run pending migrations in order",
+        "If schema_version current: skip migration",
+        "Update schema_version in asre_metadata after successful migration",
+        "Migration failure produces clear error message, container exits with non-zero code",
+        "Integration test: fresh DB, auto-migrate, verify tables exist",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 103,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-104",
+      "title": "Implement dry-run mode",
+      "description": "As an operator, I need to validate pipeline execution without writing to output tables.",
+      "acceptanceCriteria": [
+        "ASRE_DRY_RUN=true or asre run --dry-run flag",
+        "Pipeline runs all stages but skips materialization (no writes to output tables)",
+        "Logs what would be written (encounter counts, metric values)",
+        "Useful for validating new config before committing to writes",
+        "Integration test: dry run produces logs but no table changes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 104,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-105",
+      "title": "Add health check endpoint",
+      "description": "As a DevOps engineer, I need a health check for container orchestration.",
+      "acceptanceCriteria": [
+        "Lightweight HTTP endpoint on configurable port (default 8080)",
+        "/health returns 200 with {status: ok} when container is running",
+        "Returns 503 if pipeline is in a failed state",
+        "HEALTHCHECK instruction in Dockerfile",
+        "Minimal overhead (no web framework \u2014 use http.server or similar)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 105,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-106",
+      "title": "Configure CI/CD pipeline",
+      "description": "As a developer, I need automated testing and building in CI.",
+      "acceptanceCriteria": [
+        "GitHub Actions workflow (.github/workflows/ci.yml)",
+        "Steps: install dependencies, run unit tests, run integration tests against Postgres, run dbt compile + test, check snapshot diffs, build Docker image",
+        "CI runs on push to main and all PRs",
+        "CI blocks merge on test failures or unapproved snapshot changes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 106,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-107",
+      "title": "Validate environment variable configuration",
+      "description": "As an operator, I need clear errors when required env vars are missing.",
+      "acceptanceCriteria": [
+        "Required env vars per SPEC \u00a713.2: ASRE_CUSTOMER_ID, ASRE_CONFIG_PATH, ASRE_WAREHOUSE_TYPE, ASRE_WAREHOUSE_CREDENTIALS",
+        "Optional env vars: ASRE_RUN_MODE, ASRE_LOG_LEVEL, ASRE_ALERT_WEBHOOK_URL, ASRE_DRY_RUN",
+        "Missing required env var produces clear error message listing what's missing",
+        "Validation runs before any pipeline work",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 107,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-108",
+      "title": "Document deployment process",
+      "description": "As an operator, I need documentation for deploying ASRE.",
+      "acceptanceCriteria": [
+        "README.md with: quick start (local dev with Postgres), configuration guide (customer config structure), deployment guide (Docker, env vars, orchestration), CLI reference (all commands), infrastructure requirements (CPU, memory, disk per SPEC \u00a713.5), security notes (PHI handling, access control)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 108,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

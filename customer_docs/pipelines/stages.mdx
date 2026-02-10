@@ -1,0 +1,190 @@
+---
+title: "Pipeline Stages"
+description: "Detailed behavior for each stage of the ASRE pipeline"
+---
+
+# Pipeline Stages
+
+ASRE executes 12 stages in sequence on every run. The first nine produce encounter-level outputs. The final three produce episode-level outputs and can be disabled via config.
+
+```
+Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> Score -> Materialize -> Quality Check -> Episode Stitch -> Episode Materialize -> Episode Quality Check
+```
+
+---
+
+## 1. Ingest
+
+Reads from each configured source table and stages raw records for processing.
+
+For **incremental** runs, the ingest stage filters each source by `incremental_key > last_watermark - lookback_buffer`. Each source type uses its own lookback window to account for data arrival patterns: ADT signals arrive near real-time (small lookback), while claims can lag by weeks (large lookback). The per-source-type windows are configured under `schedule.lookback_buffer` in your global config.
+
+Exclude filters defined in each source config (`filters.exclude`) are applied to skip irrelevant records such as demographic updates. Ingest deduplicates on `source_record_id` to guarantee idempotency -- re-ingesting the same source records produces no new canonical events. The original source record is preserved in `_raw_payload` for audit.
+
+---
+
+## 2. Canonicalize
+
+Maps raw source records into the unified `asre_canonical_events` schema.
+
+Field mappings defined in each source YAML (`field_mappings`) translate source-specific column names to canonical columns. Event type resolution applies `event_type_rules` to derive the normalized `event_type`, `admit_flag`, and `discharge_flag` from raw HL7 trigger codes and patient class values. For example, an A01 trigger with an inpatient class maps to `ADMIT`, while A01 with an observation class maps to `OBS_START`.
+
+For **claims** sources configured with `paired_events`, the canonicalize stage emits two canonical events from a single source row -- one `CLAIM_ADMIT` event anchored on the admission date and one `CLAIM_DISCHARGE` event anchored on the discharge date. Diagnosis fields (`principal_diagnosis`, `diagnosis_codes`, `drg`) are mapped for claims sources that include them. Each event receives an ASRE-generated `event_id` (UUID) along with `ingested_at` and `batch_id` metadata.
+
+---
+
+## 3. Facility Normalize
+
+Resolves raw facility names into canonical facility IDs using a multi-step matching cascade.
+
+The **string normalization pipeline** first cleans each `facility_raw` value: convert to uppercase, strip punctuation, expand abbreviations (e.g. "MED CTR" becomes "MEDICAL CENTER"), and normalize whitespace. Directional tokens (East, West, North, South) and campus tokens (Main, Downtown, Campus) are preserved because they distinguish physically separate facilities.
+
+The **matching cascade** then runs in order:
+
+1. **Exact match** against known aliases in `asre_facility_registry`
+2. **NPI/CCN lookup** if the source includes NPI or CCN identifiers
+3. **Fuzzy match** using token-sort ratio against all known facilities; accepted if the score meets or exceeds `fuzzy_threshold` (default 0.85)
+4. **New facility** -- if no match is found, a new facility record is created and flagged `FACILITY_NEW_UNREVIEWED` for human review
+
+The `asre_facility_registry` table is updated with any new facilities or alias mappings discovered during normalization.
+
+---
+
+## 4. Stitch
+
+Groups canonical events into encounters using time windows, facility matching, and patient class transition rules.
+
+Events are partitioned by `patient_key` and sorted by `event_ts` ascending. When events share identical timestamps, the configurable `same_timestamp_tiebreaker` determines order (default: claims > ADT > auth). Starting from the first event as a new encounter, each subsequent event is evaluated:
+
+- If within `time_window_hours` of the current encounter's last event **and** the facility matches (when `facility_must_match` is true), the event is added to the current encounter. Patient class transition rules (`patient_class_transitions`) control whether transitions like ED-to-inpatient or observation-to-inpatient **merge** into the existing encounter or start a **new encounter**.
+- If outside the time window or at a different facility, the current encounter closes and a new one begins.
+
+**Transfer chain detection:** When a discharge from Facility A occurs within `time_window_hours` of an admit at Facility B, the encounters are linked via the `transfer_chain` array. Each facility segment remains its own encounter.
+
+**Cancellation handling:** `CANCEL_ADMIT` events mark the encounter as `cancelled`. `CANCEL_DISCHARGE` events reopen a previously closed encounter.
+
+**Encounter ID stability:** IDs are deterministically derived from `hash(patient_key + facility_canonical_id + first_admit_source_record_id)`. For incremental runs, ASRE matches newly stitched encounters against recent history (`history_lookback_days`) to reuse existing encounter IDs rather than creating duplicates.
+
+---
+
+## 5. Dedup
+
+Detects and removes duplicate events within encounters, and merges overlapping encounters.
+
+Within each encounter, events that match on all configured `match_fields` (default: `patient_key`, `event_type`, `facility_canonical_id`) and fall within `time_tolerance_minutes` (default: 30) are flagged as duplicates. The event with the highest source priority (per `reconciliation.timestamp_priority`) is kept; ties are broken by earliest ingestion time. Duplicate events are retained in `asre_encounters_detail` with `role_in_encounter = 'duplicate'` for audit purposes.
+
+At the encounter level, if two encounters for the same patient have overlapping time windows at the same facility, they are merged into a single encounter.
+
+---
+
+## 6. Reconcile
+
+Resolves conflicting signals across ADT, claims, and auth sources using context-dependent priority rules.
+
+**Timestamp selection** uses `reconciliation.timestamp_priority` to determine which source provides `admit_ts` and `discharge_ts`. ADT is typically highest priority for timestamps because it is closest to the real-time event. If ADT and claims timestamps differ by more than `timestamp_tolerance_hours` (default: 24), the encounter is flagged `TIMESTAMP_MISMATCH`.
+
+**Classification resolution** uses `reconciliation.classification_priority` to determine `encounter_type`, DRG, `payer_id`, and diagnosis codes. Claims is typically highest priority for classification fields because it represents the adjudicated billing record.
+
+**Auth reconciliation:** Auth signals are never used as encounter anchors and have lowest priority for both timestamps and classification. Auth without a matching ADT or claims encounter is flagged `AUTH_WITHOUT_ADMIT`. When auth does match an encounter, it boosts confidence.
+
+**Missing event detection** identifies and flags: admits without discharge (`MISSING_DISCHARGE`), discharges without admits (`ORPHAN_DISCHARGE`), claims-only encounters with no ADT (`CLAIMS_ONLY_ENCOUNTER`), and ADT encounters with no claims beyond expected lag (`ADT_ONLY_ENCOUNTER`).
+
+---
+
+## 7. Score
+
+Assigns a weighted confidence score (0.0--1.0) to each encounter using binary signals and penalty flags.
+
+The base score is a **weighted sum** of seven binary signals:
+
+| Signal | Weight | Condition |
+|--------|--------|-----------|
+| `HAS_CLAIMS` | 30 | At least one claims event matches |
+| `HAS_ADT_ADMIT` | 20 | ADT admit event present |
+| `HAS_ADT_DISCHARGE` | 10 | ADT discharge event present |
+| `HAS_AUTH` | 10 | Auth signal matches the encounter |
+| `FACILITY_RESOLVED` | 5 | Facility matched to canonical ID |
+| `TIMESTAMPS_CONSISTENT` | 15 | ADT and claims timestamps within tolerance |
+| `PATIENT_CLASS_CONSISTENT` | 10 | ADT and claims agree on encounter type |
+
+The raw score (max 100) is normalized to [0, 1]. **Penalty flags** are then subtracted:
+
+| Flag | Penalty | Trigger |
+|------|---------|---------|
+| `MISSING_DISCHARGE` | -0.15 | No discharge event and encounter open > 48h |
+| `ORPHAN_DISCHARGE` | -0.20 | Discharge without matching admit |
+| `TIMESTAMP_MISMATCH` | -0.10 | ADT vs claims admit time differs beyond tolerance |
+| `CLAIMS_ONLY_ENCOUNTER` | -0.10 | No ADT signals present |
+| `STALE_OPEN_ENCOUNTER` | -0.20 | Open beyond facility-type threshold with no activity |
+| `DUPLICATE_DETECTED` | -0.05 | Duplicates found and resolved |
+| `FACILITY_UNRESOLVED` | -0.10 | Facility could not be matched |
+| `AUTH_WITHOUT_ADMIT` | -0.05 | Auth exists but no encounter match |
+| `CANCELLED_AND_REOPENED` | -0.05 | Cancel event followed by re-admit |
+
+All weights and penalties are configurable per customer under `confidence_scoring` in the global config.
+
+**Score ranges:**
+
+| Range | Label | Recommended action |
+|-------|-------|--------------------|
+| 0.85--1.00 | High | Trusted for downstream use |
+| 0.60--0.84 | Medium | Usable; review flagged issues |
+| 0.30--0.59 | Low | Manual review recommended |
+| 0.00--0.29 | Very Low | Do not use without investigation |
+
+---
+
+## 8. Materialize
+
+Writes reconciled, scored encounters to output tables using merge/upsert operations.
+
+For incremental runs, the materialize stage performs a merge on `encounter_id` -- new encounters are inserted and existing encounters are updated. The `updated_at` timestamp is set on every modified row. **Readmission detection** compares each encounter's `admit_ts` against prior discharges from acute facilities for the same patient within 30 days and sets `is_readmission` and `readmission_days` accordingly.
+
+All materialization actions are recorded in `asre_audit_log` with the entity type, entity ID, and a detail payload describing what changed.
+
+---
+
+## 9. Quality Check
+
+Computes quality metrics, evaluates thresholds, and triggers alerts.
+
+The quality check stage calculates per-run metrics including `duplicate_rate`, `missing_discharge_rate`, `reconciliation_mismatch_rate`, `low_confidence_rate`, `facility_unresolved_rate`, and `failed_event_rate`. Each metric is evaluated against configured `warn` and `fail` thresholds. Results are written to `asre_quality_metrics` with a `pass`, `warn`, or `fail` status.
+
+If any metric breaches a `fail` threshold and `block_on_statuses` includes `"fail"`, the pipeline halts and fires a webhook alert. The webhook payload is a JSON POST containing the `run_id`, `run_ts`, and an array of alert objects with metric name, value, threshold, and severity.
+
+On successful completion, the watermark for each source is updated so the next incremental run picks up only new data.
+
+---
+
+## 10. Episode Stitch
+
+Groups encounters into episodes of care based on readmission, post-acute, and planned return rules.
+
+Episode stitching runs as post-processing after encounters are materialized. For each patient, encounters are queried in `admit_ts` order and checked against prior encounters using four linkage rules:
+
+- **Readmission:** Admit to any acute facility within `readmission_window_days` (default: 30) of a prior discharge
+- **Post-acute linkage:** Discharge from acute facility followed by admit to SNF/LTACH/rehab within `post_acute_linkage_days` (default: 14)
+- **Planned return:** Scheduled return (chemo cycle, staged surgery) within `planned_return_days` (default: 90)
+- **ED bounce-back:** ED visit within `ed_bounceback_days` (default: 7) of a prior discharge
+
+If any rule matches, the encounter is linked to the existing episode. Otherwise, a new episode is created.
+
+**Episode type classification** uses a two-tier approach: DRG-based rules map DRG codes to episode types (`surgical`, `medical`, `maternity`, etc.), and the AHRQ CCS ICD-10 grouper classifies diagnoses into clinically meaningful categories. The condition grouper is pluggable -- custom implementations (CMS Bundled Payment, Prometheus) can replace the default.
+
+**Episode confidence** is a weighted mean of encounter confidence scores, where weight is proportional to each encounter's LOS in hours (minimum weight: 1 hour for encounters without LOS).
+
+Episode statuses: `active` (at least one encounter still open), `closed` (all encounters closed), `reopened` (new encounter linked after episode was previously closed).
+
+---
+
+## 11. Episode Materialize
+
+Writes episode results to `asre_episodes` and updates the `episode_id` foreign key on `admission_events_unified`.
+
+Audit log entries are written for all episode creation and modification actions.
+
+---
+
+## 12. Episode Quality Check
+
+Computes episode-level quality metrics including episode count, readmission rate, and mean episode confidence. Evaluates episode-specific thresholds and fires alerts if breached.

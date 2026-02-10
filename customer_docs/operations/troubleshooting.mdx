@@ -1,0 +1,126 @@
+---
+title: "Troubleshooting"
+description: "Common issues and advanced debugging scenarios"
+---
+
+# Troubleshooting
+
+## UTF-8 Enforcement Failures
+
+If you see encoding errors, your Postgres server is not UTF-8. Fix by migrating the cluster or disable enforcement in dev only:
+
+```yaml
+warehouse:
+  connection:
+    require_utf8: false
+```
+
+## No Data in Outputs
+
+- Confirm source tables and mappings are correct
+- Validate watermarks for incremental runs
+- Run a full refresh to reprocess history
+
+## Quality Gate Failures
+
+Check `asre_quality_metrics` for failing metrics. Adjust thresholds or fix data quality issues upstream.
+
+If `facility_unresolved_rate` fails, populate `facility_aliases.yaml` with known
+facility mappings (or a registry path) and rerun.
+
+## `asre run` Exits with Missing Environment Variables
+
+`asre run` always requires `ASRE_CONFIG_PATH` and `ASRE_CUSTOMER_ID`.
+`ASRE_WAREHOUSE_TYPE` / `ASRE_WAREHOUSE_CREDENTIALS` are also required when
+warehouse connection values are not fully provided in `config.yaml`.
+
+Set them explicitly when using env-driven secrets:
+
+```bash
+export ASRE_WAREHOUSE_TYPE=postgres
+export ASRE_WAREHOUSE_CREDENTIALS=/path/to/warehouse.json
+```
+
+## dbt Target Errors
+
+If dbt reports `profile 'asre' does not have a target named 'postgres'`, use:
+
+```bash
+dbt compile --target dev
+dbt test --target dev
+```
+
+## dbt Tests Fail with "Relation Does Not Exist"
+
+This usually means ASRE output tables were not materialized yet.
+
+Run migrations (or run the pipeline once) before dbt tests:
+
+```bash
+python3 - <<'PY'
+from asre.ingest.postgres import PostgresAdapter
+from asre.migration.migrator import Migrator
+
+adapter = PostgresAdapter({
+  "host": "localhost",
+  "port": 5432,
+  "database": "asre_test",
+  "user": "asre_test",
+  "password": "asre_test",
+  "schema": "public",
+})
+adapter.connect()
+try:
+  Migrator(adapter).run()
+finally:
+  adapter.disconnect()
+PY
+```
+
+---
+
+## Confidence Scores Unexpectedly Low
+
+Low confidence scores are usually caused by penalty flags. Check the `confidence_flags` array on affected encounters:
+
+```sql
+SELECT encounter_id, confidence_score, confidence_flags
+FROM admission_events_unified
+WHERE confidence_score < 0.60
+ORDER BY confidence_score ASC;
+```
+
+Common causes:
+
+- **`CLAIMS_ONLY_ENCOUNTER`** (-0.10): No ADT signals. Check whether ADT source is configured and ingesting data.
+- **`MISSING_DISCHARGE`** (-0.15): No discharge event after 48 hours. May indicate incomplete ADT feeds or delayed claims.
+- **`STALE_OPEN_ENCOUNTER`** (-0.20): Encounter open beyond facility-type threshold. Verify the facility type is correctly set -- a SNF encounter flagged as `acute` will trigger this prematurely.
+- **`FACILITY_UNRESOLVED`** (-0.10): Facility not matched. Add aliases to `facility_aliases.yaml`.
+- **Multiple sources missing**: If encounters have only one source type, multiple signals will be 0. Consider whether all expected sources are configured.
+
+## Facility Matching Failures
+
+If too many facilities are being flagged `FACILITY_NEW_UNREVIEWED`:
+
+1. **Lower the fuzzy threshold** (with care): Reduce `fuzzy_threshold` from 0.85 to 0.80. This catches more matches but increases false positives.
+2. **Add aliases**: Use `asre facilities --unresolved` to list unmatched facilities, then add them to `facility_aliases.yaml`.
+3. **Check abbreviations**: If your sources use non-standard abbreviations, the normalization pipeline may not expand them. Verify the abbreviation dictionary covers your data.
+4. **Enable NPI/CCN**: If your sources include NPI or CCN identifiers, ensure `use_npi_registry: true` and `use_ccn_registry: true` are set.
+
+## Episode Grouping Unexpected Results
+
+If encounters are being grouped into episodes unexpectedly (or not grouped when they should be):
+
+- **Too many episodes merging**: Reduce `readmission_window_days` or `post_acute_linkage_days` to narrow the linkage window.
+- **Episodes not linking**: Increase the relevant window. Check that facility types are correctly classified -- post-acute linkage only applies when the destination is SNF, LTACH, or rehab.
+- **Wrong episode type**: Episode classification depends on DRG and diagnosis codes from claims. If claims are not yet ingested, all episodes will be `unclassified`.
+
+## Webhook Alerts Not Firing
+
+If quality thresholds are breached but no alerts arrive:
+
+1. **Check alerting is enabled**: Ensure `alerting.enabled: true` in your config.
+2. **Verify the webhook URL**: The `${ASRE_ALERT_WEBHOOK_URL}` environment variable must be set and reachable from the ASRE container.
+3. **Check network access**: The ASRE container must have outbound HTTPS access to the webhook endpoint.
+4. **Review thresholds**: Alerts only fire when metrics cross `warn` or `fail` thresholds. A metric at 0.04 with a `warn` threshold of 0.05 will not trigger.
+5. **Check logs**: ASRE logs webhook delivery attempts. Look for HTTP errors or connection timeouts in the pipeline output.

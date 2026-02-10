@@ -279,6 +279,7 @@ All required environment variables must be set before running the container.
 |----------|----------|-------------|
 | `ASRE_CONFIG_PATH` | Yes | Path to customer config root directory |
 | `ASRE_CUSTOMER_ID` | Yes | Customer subdirectory name |
+| `ASRE_LICENSE_KEY` | Yes | RSA-256 signed JWT license key for pipeline execution |
 | `ASRE_WAREHOUSE_TYPE` | Conditional | Required when `warehouse.type` is not fully defined in `config.yaml` |
 | `ASRE_WAREHOUSE_CREDENTIALS` | Conditional | Required when `warehouse.connection` is not fully defined in `config.yaml` |
 | `ASRE_RUN_MODE` | No | `full` or `incremental` (default: `incremental`) |
@@ -449,6 +450,34 @@ Manage episode computation.
 asre episodes --recompute --config-path PATH --customer-id ID
 ```
 
+### asre validate-env
+
+Validate that all required ASRE environment variables are set and valid.
+
+```bash
+asre validate-env
+```
+
+### asre migrate
+
+Run or rollback database schema migrations.
+
+```bash
+# Run pending migrations
+asre migrate --config-path PATH --customer-id ID
+
+# Rollback to a specific version
+asre migrate --rollback VERSION --config-path PATH --customer-id ID
+```
+
+### asre build-registry
+
+Build the SQLite facility registry from NPPES and CMS POS sources.
+
+```bash
+asre build-registry --config-path PATH --customer-id ID
+```
+
 ---
 
 ## Infrastructure Requirements
@@ -471,24 +500,26 @@ asre episodes --recompute --config-path PATH --customer-id ID
 
 ## Output Tables
 
-ASRE materializes five output tables in the configured warehouse schema:
+ASRE materializes seven output tables in the configured warehouse schema:
 
 | Table | Description |
 |-------|-------------|
 | `admission_events_unified` | Primary output. Encounter-level unified view with confidence scores. |
 | `asre_encounters_detail` | Event-level detail with role classifications (admit_anchor, discharge_anchor, supporting, conflicting). |
+| `asre_episodes` | Episode-level groupings linking related encounters (readmissions, transfers, post-acute chains). |
 | `asre_facility_registry` | Canonical facility master with aliases, NPI, CCN, facility type. |
 | `asre_quality_metrics` | Per-run quality metrics with pass/warn/fail status. |
+| `asre_run_metrics` | Per-stage timing, record counts, and error counts for each pipeline run. |
 | `asre_audit_log` | All pipeline modifications tracked for audit. |
 
 ---
 
 ## Architecture Overview
 
-ASRE processes data through a sequential pipeline of stages:
+ASRE processes data through a sequential pipeline of 12 stages:
 
 ```
-Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> Score -> Materialize -> Quality Check
+Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> Score -> Materialize -> Quality Check -> Episode Stitch -> Episode Materialize -> Episode Quality
 ```
 
 - **Ingest** -- Reads source tables from the warehouse using adapter-specific SQL, applies watermark filtering for incremental runs.
@@ -500,6 +531,9 @@ Ingest -> Canonicalize -> Facility Normalize -> Stitch -> Dedup -> Reconcile -> 
 - **Score** -- Computes weighted confidence scores (0.0-1.0) using configurable signal weights and penalty flags.
 - **Materialize** -- Writes unified encounters and detail records to output tables.
 - **Quality Check** -- Computes per-run metrics, evaluates thresholds, and fires webhook alerts if thresholds are breached.
+- **Episode Stitch** -- Groups related encounters into episodes using readmission windows, post-acute linkage, planned return windows, and ED bounceback rules.
+- **Episode Materialize** -- Writes episode records to the `asre_episodes` output table.
+- **Episode Quality** -- Computes episode-level quality metrics and evaluates thresholds.
 
 ---
 
