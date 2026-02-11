@@ -53,16 +53,21 @@ class Migrator:
     def __init__(self, adapter: IngestAdapter) -> None:
         self._adapter = adapter
 
+    def _meta_table(self) -> str:
+        """Return the schema-qualified asre_metadata table name."""
+        return self._adapter.qualify_table("asre_metadata")
+
     def get_schema_version(self) -> int:
         """Get current schema version from asre_metadata.
 
         Creates the asre_metadata table if it doesn't exist.
         Returns 0 if no schema_version key found.
         """
+        table = self._meta_table()
         try:
             rows = self._adapter.read_source(
                 "asre_metadata",
-                "SELECT value FROM asre_metadata WHERE key = 'schema_version'",
+                f"SELECT value FROM {table} WHERE key = 'schema_version'",  # nosec B608
             )
         except Exception:
             # Table doesn't exist — create it
@@ -75,17 +80,18 @@ class Migrator:
 
     def set_schema_version(self, version: int) -> None:
         """Set the schema version in asre_metadata via warehouse-appropriate upsert."""
+        table = self._meta_table()
         wt = getattr(self._adapter, "warehouse_type", "postgres")
         if wt == "redshift":
             self._adapter.execute_ddl(
-                "DELETE FROM asre_metadata WHERE key = 'schema_version'"
+                f"DELETE FROM {table} WHERE key = 'schema_version'"  # nosec B608
             )
             self._adapter.execute_ddl(
-                f"INSERT INTO asre_metadata (key, value) VALUES ('schema_version', '{version}')"  # nosec B608
+                f"INSERT INTO {table} (key, value) VALUES ('schema_version', '{version}')"  # nosec B608
             )
         elif wt in ("snowflake", "bigquery"):
             self._adapter.execute_ddl(
-                "MERGE INTO asre_metadata AS target "
+                f"MERGE INTO {table} AS target "  # nosec B608
                 f"USING (SELECT 'schema_version' AS key, '{version}' AS value) AS source "  # nosec B608
                 "ON target.key = source.key "
                 "WHEN MATCHED THEN UPDATE SET value = source.value "
@@ -94,7 +100,7 @@ class Migrator:
         else:
             # Postgres (default)
             self._adapter.execute_ddl(
-                "INSERT INTO asre_metadata (key, value) "
+                f"INSERT INTO {table} (key, value) "  # nosec B608
                 f"VALUES ('schema_version', '{version}') "  # nosec B608
                 "ON CONFLICT (key) DO UPDATE SET value = "
                 f"'{version}'"  # nosec B608
@@ -183,8 +189,9 @@ class Migrator:
             else:
                 # Drop metadata table is handled by migration 001's downgrade
                 try:
+                    table = self._meta_table()
                     self._adapter.execute_ddl(
-                        "DELETE FROM asre_metadata WHERE key = 'schema_version'"
+                        f"DELETE FROM {table} WHERE key = 'schema_version'"  # nosec B608
                     )
                 except Exception as exc:
                     logger.debug(
@@ -195,10 +202,19 @@ class Migrator:
         return MigrationResult(applied=rolled_back, current_version=target_version)
 
     def _create_metadata_table(self) -> None:
-        """Create the asre_metadata table."""
+        """Create the asre_metadata table with warehouse-appropriate types."""
+        from asre.migration.ddl_types import DDLTypeMapper
+
+        wt = getattr(self._adapter, "warehouse_type", "postgres")
+        m = DDLTypeMapper(wt)
+
+        key_col = m.primary_key("key")
+        value_type = m.text()
+
+        table = self._meta_table()
         self._adapter.execute_ddl(
-            "CREATE TABLE IF NOT EXISTS asre_metadata ("
-            "key TEXT PRIMARY KEY, "
-            "value TEXT NOT NULL"
-            ")"
+            f"CREATE TABLE IF NOT EXISTS {table} ("  # nosec B608
+            f"{key_col}, "
+            f"value {value_type} NOT NULL"
+            f")"
         )

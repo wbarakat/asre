@@ -89,7 +89,14 @@ class SnowflakeAdapter(IngestAdapter):
         cursor = self._connection.cursor()
         try:
             if params:
-                cursor.execute(query, params)
+                ordered_keys: list[str] = []
+
+                def _replace(match: re.Match[str]) -> str:
+                    ordered_keys.append(match.group(1))
+                    return "%s"
+
+                translated = re.sub(r":(\w+)", _replace, query)
+                cursor.execute(translated, tuple(params[k] for k in ordered_keys))
             else:
                 cursor.execute(query)
 
@@ -155,11 +162,12 @@ class SnowflakeAdapter(IngestAdapter):
         cursor = self._connection.cursor()
         try:
             if params:
-                import re
                 ordered_keys: list[str] = []
+
                 def _replace(match: re.Match[str]) -> str:
                     ordered_keys.append(match.group(1))
                     return "%s"
+
                 translated = re.sub(r":(\w+)", _replace, statement)
                 cursor.execute(translated, tuple(params[k] for k in ordered_keys))
             else:

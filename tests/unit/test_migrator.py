@@ -15,11 +15,13 @@ class TestMigratorConstruction:
 
     def test_create_migrator_with_adapter(self) -> None:
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
         assert migrator is not None
 
     def test_migrator_stores_adapter(self) -> None:
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
         assert migrator._adapter is adapter
 
@@ -30,6 +32,7 @@ class TestSchemaVersionCheck:
     def test_get_schema_version_creates_metadata_table_if_missing(self) -> None:
         """If asre_metadata doesn't exist, Migrator creates it."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         # Simulate table doesn't exist — read_source raises
         adapter.read_source.side_effect = Exception("relation \"asre_metadata\" does not exist")
         migrator = Migrator(adapter)
@@ -46,6 +49,7 @@ class TestSchemaVersionCheck:
     def test_get_schema_version_returns_stored_version(self) -> None:
         """If asre_metadata exists with schema_version, return it."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = [{"value": "3"}]
         migrator = Migrator(adapter)
 
@@ -56,6 +60,7 @@ class TestSchemaVersionCheck:
     def test_get_schema_version_returns_zero_when_no_version_key(self) -> None:
         """If asre_metadata exists but no schema_version key, return 0."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
         migrator = Migrator(adapter)
 
@@ -70,6 +75,7 @@ class TestMigrationDiscovery:
     def test_discover_migrations_finds_scripts(self) -> None:
         """Migration scripts in versions/ directory are discovered."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
 
         migrations = migrator.discover_migrations()
@@ -80,6 +86,7 @@ class TestMigrationDiscovery:
     def test_discover_migrations_ordered_by_version(self) -> None:
         """Migrations are returned ordered by version number."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
 
         migrations = migrator.discover_migrations()
@@ -91,6 +98,7 @@ class TestMigrationDiscovery:
     def test_migration_has_version_and_description(self) -> None:
         """Each migration has a version number and description."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
 
         migrations = migrator.discover_migrations()
@@ -107,6 +115,7 @@ class TestMigrationExecution:
     def test_run_skips_already_applied(self) -> None:
         """Migrations with version <= current schema_version are skipped."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         migrator = Migrator(adapter)
         latest_version = max((m.version for m in migrator.discover_migrations()), default=0)
         # Schema version already at highest migration version
@@ -121,6 +130,7 @@ class TestMigrationExecution:
     def test_run_applies_pending_migrations(self) -> None:
         """Migrations with version > current schema_version are applied."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         # Fresh DB — no schema version
         adapter.read_source.side_effect = Exception("relation does not exist")
         migrator = Migrator(adapter)
@@ -133,6 +143,7 @@ class TestMigrationExecution:
     def test_run_updates_schema_version_after_each_migration(self) -> None:
         """Schema version is updated after each successful migration."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         # Fresh DB
         adapter.read_source.side_effect = Exception("relation does not exist")
         migrator = Migrator(adapter)
@@ -148,6 +159,7 @@ class TestMigrationExecution:
     def test_run_result_has_fields(self) -> None:
         """MigrationResult has applied count and current version."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = [{"value": "999"}]
         migrator = Migrator(adapter)
 
@@ -164,6 +176,7 @@ class TestSetSchemaVersion:
 
     def test_set_schema_version(self) -> None:
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = [{"value": "0"}]
         migrator = Migrator(adapter)
 

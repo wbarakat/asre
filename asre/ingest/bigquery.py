@@ -61,7 +61,14 @@ class BigQueryAdapter(IngestAdapter):
 
         try:
             kwargs: dict[str, Any] = {"project": project, "location": location}
-            if credentials_path:
+            api_endpoint = self._config.get("api_endpoint")
+            if api_endpoint:
+                from google.api_core.client_options import ClientOptions
+                from google.auth.credentials import AnonymousCredentials
+
+                kwargs["client_options"] = ClientOptions(api_endpoint=api_endpoint)
+                kwargs["credentials"] = AnonymousCredentials()
+            elif credentials_path:
                 from google.oauth2 import service_account
 
                 credentials_cls = cast(Any, service_account.Credentials)
@@ -113,10 +120,11 @@ class BigQueryAdapter(IngestAdapter):
             raise RuntimeError("Not connected. Call connect() first.")
 
         if params:
+            translated = re.sub(r":(\w+)", r"@\1", query)
             job_config = self._make_job_config(
                 [(k, "STRING", str(v)) for k, v in params.items()]
             )
-            query_job = self._client.query(query, job_config=job_config)
+            query_job = self._client.query(translated, job_config=job_config)
         else:
             query_job = self._client.query(query)
 
@@ -168,6 +176,11 @@ class BigQueryAdapter(IngestAdapter):
         query_job = self._client.query(ddl)
         query_job.result()  # Wait for completion
 
+    def qualify_table(self, table_name: str) -> str:
+        """Return a dataset-qualified, backtick-wrapped table name for BigQuery."""
+        dataset = self._validate_identifier(self._dataset, "dataset")
+        return f"`{dataset}.{table_name}`"
+
     def execute_dml(self, statement: str, params: dict[str, Any] | None = None) -> None:
         """Execute a parameterized DML statement.
 
@@ -176,7 +189,6 @@ class BigQueryAdapter(IngestAdapter):
         if self._client is None:
             raise RuntimeError("Not connected. Call connect() first.")
         if params:
-            import re
             translated = re.sub(r":(\w+)", r"@\1", statement)
             job_config = self._make_job_config(
                 [(k, "STRING", str(v)) for k, v in params.items()]

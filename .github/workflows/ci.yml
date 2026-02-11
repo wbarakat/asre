@@ -29,6 +29,22 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      postgres-redshift:
+        image: postgres:15
+        env:
+          POSTGRES_USER: asre_test
+          POSTGRES_PASSWORD: asre_test
+          POSTGRES_DB: asre_test
+          POSTGRES_HOST_AUTH_METHOD: md5
+          POSTGRES_INITDB_ARGS: "--auth-host=md5"
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +58,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+
+      - name: Start BigQuery emulator
+        run: |
+          docker run -d --name bigquery-emulator \
+            -p 9050:9050 \
+            ghcr.io/goccy/bigquery-emulator:latest \
+            --project=test --dataset=test
+          # Wait for emulator to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9050/bigquery/v2/projects/test/datasets/test >/dev/null 2>&1; then
+              echo "BigQuery emulator ready"
+              break
+            fi
+            echo "Waiting for BigQuery emulator... ($i/30)"
+            sleep 2
+          done
 
       - name: Run typecheck
         run: |
@@ -64,11 +96,20 @@ jobs:
       - name: Run integration tests
         env:
           ASRE_TEST_PG_HOST: localhost
-          ASRE_TEST_PG_PORT: 5432
+          ASRE_TEST_PG_PORT: "5432"
           ASRE_TEST_PG_DATABASE: asre_test
           ASRE_TEST_PG_USER: asre_test
           ASRE_TEST_PG_PASSWORD: asre_test
           ASRE_TEST_PG_SCHEMA: public
+          ASRE_TEST_BQ_PROJECT: test
+          ASRE_TEST_BQ_DATASET: test
+          ASRE_TEST_BQ_ENDPOINT: http://localhost:9050
+          ASRE_TEST_RS_HOST: localhost
+          ASRE_TEST_RS_PORT: "5434"
+          ASRE_TEST_RS_DATABASE: asre_test
+          ASRE_TEST_RS_USER: asre_test
+          ASRE_TEST_RS_PASSWORD: asre_test
+          ASRE_TEST_RS_SCHEMA: public
         run: |
           python -m pytest tests/integration/ -v --tb=short
 

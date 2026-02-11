@@ -49,6 +49,7 @@ class RedshiftAdapter(IngestAdapter):
         database = self._config.get("database", "")
         user = self._config.get("user", "")
         password = self._config.get("password", "")
+        ssl = self._config.get("ssl", True)
 
         try:
             self._connection = redshift_connect(
@@ -57,6 +58,7 @@ class RedshiftAdapter(IngestAdapter):
                 database=database,
                 user=user,
                 password=password,
+                ssl=ssl,
             )
         except Exception as exc:
             raise ConnectionError(
@@ -86,7 +88,14 @@ class RedshiftAdapter(IngestAdapter):
         cursor = self._connection.cursor()
         try:
             if params:
-                cursor.execute(query, params)
+                ordered_keys: list[str] = []
+
+                def _replace(match: re.Match[str]) -> str:
+                    ordered_keys.append(match.group(1))
+                    return "%s"
+
+                translated = re.sub(r":(\w+)", _replace, query)
+                cursor.execute(translated, tuple(params[k] for k in ordered_keys))
             else:
                 cursor.execute(query)
 
@@ -96,14 +105,21 @@ class RedshiftAdapter(IngestAdapter):
         finally:
             cursor.close()
 
+    def qualify_table(self, table_name: str) -> str:
+        """Return a schema-qualified table name for Redshift."""
+        if self._schema:
+            return f"{self._schema}.{table_name}"
+        return table_name
+
     def get_watermark(self, source_name: str) -> datetime | None:
         """Retrieve the last watermark for a source from asre_metadata."""
         if self._connection is None:
             raise RuntimeError("Not connected. Call connect() first.")
+        table = self.qualify_table("asre_metadata")
         cursor = self._connection.cursor()
         try:
             cursor.execute(
-                "SELECT value FROM asre_metadata WHERE key = %s",
+                f"SELECT value FROM {table} WHERE key = %s",  # nosec B608
                 (f"watermark_{source_name}",),
             )
             row = cursor.fetchone()
@@ -117,16 +133,17 @@ class RedshiftAdapter(IngestAdapter):
         """Update the watermark for a source using DELETE + INSERT (Redshift lacks MERGE)."""
         if self._connection is None:
             raise RuntimeError("Not connected. Call connect() first.")
+        table = self.qualify_table("asre_metadata")
         key = f"watermark_{source_name}"
         value = watermark.isoformat()
         cursor = self._connection.cursor()
         try:
             cursor.execute(
-                "DELETE FROM asre_metadata WHERE key = %s",
+                f"DELETE FROM {table} WHERE key = %s",  # nosec B608
                 (key,),
             )
             cursor.execute(
-                "INSERT INTO asre_metadata (key, value) VALUES (%s, %s)",
+                f"INSERT INTO {table} (key, value) VALUES (%s, %s)",  # nosec B608
                 (key, value),
             )
         finally:
@@ -152,11 +169,12 @@ class RedshiftAdapter(IngestAdapter):
         cursor = self._connection.cursor()
         try:
             if params:
-                import re
                 ordered_keys: list[str] = []
+
                 def _replace(match: re.Match[str]) -> str:
                     ordered_keys.append(match.group(1))
                     return "%s"
+
                 translated = re.sub(r":(\w+)", _replace, statement)
                 cursor.execute(translated, tuple(params[k] for k in ordered_keys))
             else:

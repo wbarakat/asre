@@ -13,6 +13,28 @@ services:
       timeout: 3s
       retries: 5
 
+  postgres-redshift:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: asre_test
+      POSTGRES_PASSWORD: asre_test
+      POSTGRES_DB: asre_test
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asre_test -d asre_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  bigquery-emulator:
+    image: ghcr.io/goccy/bigquery-emulator:latest
+    command: ["--project=test", "--dataset=test"]
+    ports:
+      - "9050:9050"
+
   asre:
     build: .
     depends_on:

@@ -82,6 +82,15 @@ class IngestAdapter(ABC):
             params: Parameter values for the statement.
         """
 
+    def qualify_table(self, table_name: str) -> str:
+        """Return a schema/dataset-qualified table name for SQL statements.
+
+        Default implementation returns the name unchanged.  Adapters that
+        do not set a session-level default schema (e.g. Redshift) or that
+        require explicit dataset qualification (BigQuery) should override.
+        """
+        return table_name
+
     @abstractmethod
     def write_records(
         self,

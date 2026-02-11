@@ -54,6 +54,7 @@ class TestCheckpointState:
 
         # Use mock adapter for storage
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -75,6 +76,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -94,6 +96,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = [
             {
                 "run_id": "run_20250101_120000",
@@ -115,6 +118,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -126,6 +130,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -145,6 +150,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -165,6 +171,7 @@ class TestCheckpointState:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.warehouse_type = "postgres"
 
         mgr = CheckpointManager(adapter)
@@ -187,6 +194,7 @@ class TestCheckpointManagerTable:
         from asre.pipeline.checkpoint import CheckpointManager
 
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         mgr = CheckpointManager(adapter)
@@ -206,6 +214,7 @@ class TestPipelineRunnerCheckpointing:
     ) -> PipelineRunner:
         if adapter is None:
             adapter = MagicMock()
+            adapter.qualify_table.side_effect = lambda name: name
             adapter.read_source.return_value = []
         config: dict[str, Any] = {"adapter": adapter}
         runner = PipelineRunner(config=config, mode="full")
@@ -214,6 +223,7 @@ class TestPipelineRunnerCheckpointing:
     def test_runner_saves_checkpoint_after_each_stage(self) -> None:
         """PipelineRunner should save a checkpoint after each stage completes."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         runner = self._make_runner_with_adapter(adapter)
@@ -238,6 +248,7 @@ class TestPipelineRunnerCheckpointing:
     def test_runner_resumes_from_checkpoint(self) -> None:
         """PipelineRunner should replay all stages when resuming for correctness."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         # Return a checkpoint indicating stitch (index 3) was last completed
         adapter.read_source.return_value = [
             {
@@ -278,6 +289,7 @@ class TestPipelineRunnerCheckpointing:
     def test_full_mode_runs_cleanup_before_stages(self) -> None:
         """Full mode should clear derived tables before running stages."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         runner = self._make_runner_with_adapter(adapter)
@@ -294,6 +306,7 @@ class TestPipelineRunnerCheckpointing:
     def test_failed_stage_records_checkpoint_with_failure(self) -> None:
         """When a stage fails, the checkpoint should record the failure."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         runner = self._make_runner_with_adapter(adapter)
@@ -327,6 +340,7 @@ class TestPipelineRunnerCheckpointing:
     def test_resume_nonexistent_run_raises_error(self) -> None:
         """Resuming a run_id that doesn't exist should raise a clear error."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = []
 
         runner = self._make_runner_with_adapter(adapter)
@@ -344,6 +358,7 @@ class TestPipelineRunnerCheckpointing:
     def test_resume_completed_run_raises_error(self) -> None:
         """Resuming an already-completed run should raise an error."""
         adapter = MagicMock()
+        adapter.qualify_table.side_effect = lambda name: name
         adapter.read_source.return_value = [
             {
                 "run_id": "run_20250101_120000",

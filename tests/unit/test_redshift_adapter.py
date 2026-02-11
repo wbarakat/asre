@@ -68,6 +68,7 @@ class TestRedshiftAdapterConnection:
             database="mydb",
             user="myuser",
             password="mypass",
+            ssl=True,
         )
 
     @patch("asre.ingest.redshift._HAS_REDSHIFT", True)
