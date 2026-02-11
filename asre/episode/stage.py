@@ -111,7 +111,11 @@ def scored_encounter_to_encounter(enc: Any) -> Encounter:
         discharge_ts=discharge_ts,
         los_hours=los_hours,
         facility_canonical_id=facility_canonical_id,
-        facility_name=facility_canonical_id,
+        # Prefer facility_name from events (customer-provided), fall back to canonical_id
+        facility_name=next(
+            (e.facility_name for e in events if e.facility_name),
+            facility_canonical_id,
+        ),
         is_acute=is_acute,
         source_event_ids=source_event_ids,
         source_systems=source_systems,

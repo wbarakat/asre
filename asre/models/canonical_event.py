@@ -29,6 +29,7 @@ class CanonicalEvent:
     # Optional fields (nullable in spec)
     facility_canonical_id: str | None = None
     facility_match_type: str | None = None
+    facility_name: str | None = None
     npi: str | None = None
     ccn: str | None = None
     admit_flag: bool | None = None

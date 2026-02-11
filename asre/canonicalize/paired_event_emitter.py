@@ -61,6 +61,8 @@ class PairedEventEmitter:
         drg = self._get_optional(record, fm.drg)
         principal_diagnosis = self._get_optional(record, fm.principal_diagnosis)
         patient_class = self._get_optional(record, fm.patient_class)
+        facility_canonical_id = self._get_optional(record, fm.facility_canonical_id)
+        facility_name = self._get_optional(record, fm.facility_name)
         raw_payload = record.get("_raw_payload")
 
         now = datetime.now(timezone.utc)
@@ -80,6 +82,9 @@ class PairedEventEmitter:
             facility_raw=facility_raw,
             ingested_at=now,
             batch_id=batch_id,
+            facility_canonical_id=facility_canonical_id,
+            facility_match_type="customer_provided" if facility_canonical_id else None,
+            facility_name=facility_name,
             admit_flag=True,
             payer_id=payer_id,
             drg=drg,
@@ -103,6 +108,9 @@ class PairedEventEmitter:
             facility_raw=facility_raw,
             ingested_at=now,
             batch_id=batch_id,
+            facility_canonical_id=facility_canonical_id,
+            facility_match_type="customer_provided" if facility_canonical_id else None,
+            facility_name=facility_name,
             discharge_flag=True,
             payer_id=payer_id,
             drg=drg,

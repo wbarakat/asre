@@ -19,6 +19,7 @@ export ASRE_CONFIG_PATH="$PWD/customer_config"
 export ASRE_CUSTOMER_ID="<customer_id>"
 export ASRE_WAREHOUSE_TYPE="postgres"   # postgres | snowflake | bigquery | redshift
 export ASRE_WAREHOUSE_CREDENTIALS="/path/to/warehouse.json"
+export ASRE_LICENSE_KEY="eyJhbGc..."    # Required for asre run
 ```
 
 Example `warehouse.json`:
@@ -49,6 +50,29 @@ warehouse tables and column names:
 
 Only update fields you actually have. Unused mappings can be left as-is or
 removed when optional.
+
+### Facility Mapping (Optional)
+
+If your warehouse already has canonical facility IDs, you can bypass ASRE's
+facility normalization entirely by mapping `facility_canonical_id`:
+
+```yaml
+field_mappings:
+  patient_key: "patient_mrn"
+  event_ts: "message_ts"
+  source_record_id: "message_control_id"
+  facility_canonical_id: "your_facility_id_column"  # Optional: bypass ASRE normalization
+  facility_name: "your_facility_name_column"          # Optional: human-readable name
+```
+
+When `facility_canonical_id` is mapped, ASRE will:
+- Set `facility_match_type` to `"customer_provided"` on every event
+- Skip the facility normalization cascade (exact, NPI, CCN, fuzzy matching)
+- Use your facility ID as-is for stitching, dedup, and scoring
+- Use `facility_name` (if provided) in materialized output
+
+If you don't map `facility_canonical_id`, ASRE uses its normal normalization
+cascade to resolve facility names.
 
 ## 4) (Optional) Add facility aliases
 

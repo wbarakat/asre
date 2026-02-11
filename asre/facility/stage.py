@@ -121,6 +121,9 @@ class FacilityNormalizationStage(PipelineStage):
 
         New facilities are added to the registry.
         """
+        if event.facility_canonical_id and event.facility_match_type == "customer_provided":
+            return  # Customer already provided canonical ID; skip normalization
+
         facility_raw = event.facility_raw
         if not facility_raw or not facility_raw.strip():
             return

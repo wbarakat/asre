@@ -29,6 +29,8 @@ class FieldMappings(BaseModel):
     diagnosis_codes: str | None = None
     npi: str | None = None
     ccn: str | None = None
+    facility_canonical_id: str | None = None
+    facility_name: str | None = None
 
 
 class EventTypeRules(BaseModel):

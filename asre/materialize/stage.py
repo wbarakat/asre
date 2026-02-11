@@ -164,7 +164,11 @@ def encounter_to_record(
 
     # Facility info
     facility_canonical_id = enc.facility_canonical_id or ""
-    facility_name = facility_canonical_id  # Best available; registry lookup is external
+    # Prefer facility_name from events (customer-provided), fall back to canonical_id
+    facility_name = next(
+        (e.facility_name for e in events if e.facility_name),
+        facility_canonical_id,
+    )
     is_acute = _is_acute_type(enc, facility_canonical_id)
 
     # Transfer chain

@@ -64,6 +64,8 @@ class FieldMapper:
         principal_diagnosis = self._get_optional(record, fm.principal_diagnosis)
         npi = self._get_optional(record, fm.npi)
         ccn = self._get_optional(record, fm.ccn)
+        facility_canonical_id = self._get_optional(record, fm.facility_canonical_id)
+        facility_name = self._get_optional(record, fm.facility_name)
 
         return CanonicalEvent(
             event_id=str(uuid.uuid4()),
@@ -79,6 +81,9 @@ class FieldMapper:
             payer_id=payer_id,
             drg=drg,
             principal_diagnosis=principal_diagnosis,
+            facility_canonical_id=facility_canonical_id,
+            facility_match_type="customer_provided" if facility_canonical_id else None,
+            facility_name=facility_name,
             npi=npi,
             ccn=ccn,
             _raw_payload=record.get("_raw_payload"),
