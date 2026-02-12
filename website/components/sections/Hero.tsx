@@ -12,7 +12,7 @@ function renderHeadline(headline: string, phrase: string): React.ReactNode {
   return (
     <>
       {before}
-      <span className="text-primary">{phrase}</span>
+      <span className="text-accent">{phrase}</span>
       {after}
     </>
   );
@@ -20,25 +20,24 @@ function renderHeadline(headline: string, phrase: string): React.ReactNode {
 
 export default function Hero() {
   return (
-    <section className="section-blue min-h-screen flex items-center justify-center relative overflow-hidden">
-      {/* Soft decorative blobs */}
-      <div className="absolute top-20 right-[10%] w-[500px] h-[500px] bg-primary-200/40 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-20 left-[15%] w-[400px] h-[400px] bg-indigo-200/30 rounded-full blur-[100px] pointer-events-none" />
+    <section className="section-black min-h-screen flex items-center justify-center relative overflow-hidden">
+      {/* Subtle accent glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/[0.07] rounded-full blur-[150px] pointer-events-none" />
 
       <div className="max-w-4xl mx-auto text-center px-6 relative z-10 pt-24">
-        <p className="text-primary font-medium text-sm uppercase tracking-widest mb-6 animate-slide-up">
+        <p className="font-serif italic text-white/70 text-base md:text-lg mb-6 animate-fade-up">
           Admission Signal Reliability Engine
         </p>
 
-        <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight text-navy animate-slide-up animate-delay-100">
+        <h1 className="font-serif text-5xl md:text-7xl lg:text-[5.5rem] text-white leading-[1.1] tracking-tight animate-fade-up animate-delay-100">
           {renderHeadline(HERO.headline, HERO.highlightedPhrase)}
         </h1>
 
-        <p className="text-lg md:text-xl text-navy-100 max-w-2xl mx-auto mt-6 leading-relaxed animate-slide-up animate-delay-200">
+        <p className="text-xl md:text-2xl text-white/90 max-w-2xl mx-auto mt-8 leading-relaxed animate-fade-up animate-delay-200">
           {HERO.subheadline}
         </p>
 
-        <div className="flex flex-wrap gap-4 justify-center mt-10 animate-slide-up animate-delay-300">
+        <div className="flex flex-wrap gap-4 justify-center mt-10 animate-fade-up animate-delay-300">
           <Button variant="primary" size="lg" href={CALENDLY_URL}>
             {HERO.ctaPrimary}
           </Button>

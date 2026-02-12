@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useCallback } from "react";
 import { BOOK_CALL, CALENDLY_URL } from "@/lib/constants";
+import Button from "@/components/ui/Button";
+import ScrollReveal from "@/components/ui/ScrollReveal";
+
+declare global {
+  interface Window {
+    Calendly?: {
+      initPopupWidget: (opts: { url: string }) => void;
+    };
+  }
+}
 
 export default function BookCall() {
-  const [loaded, setLoaded] = useState(false);
-
   useEffect(() => {
     const link = document.createElement("link");
     link.rel = "stylesheet";
@@ -15,7 +23,6 @@ export default function BookCall() {
     const script = document.createElement("script");
     script.src = "https://assets.calendly.com/assets/external/widget.js";
     script.async = true;
-    script.onload = () => setLoaded(true);
     document.head.appendChild(script);
 
     return () => {
@@ -24,24 +31,42 @@ export default function BookCall() {
     };
   }, []);
 
-  return (
-    <section id="about" className="section-light py-24 md:py-32">
-      <div className="max-w-4xl mx-auto px-6">
-        <p className="text-primary font-medium text-sm uppercase tracking-widest text-center mb-4">
-          Get Started
-        </p>
-        <h2 className="text-3xl md:text-5xl font-bold text-center text-navy mb-4">
-          {BOOK_CALL.heading}
-        </h2>
-        <p className="text-navy-100 text-center text-lg mb-12 max-w-2xl mx-auto">
-          {BOOK_CALL.description}
-        </p>
+  const openCalendly = useCallback(() => {
+    if (window.Calendly) {
+      window.Calendly.initPopupWidget({
+        url: `${CALENDLY_URL}?hide_gdpr_banner=1`,
+      });
+    } else {
+      window.open(CALENDLY_URL, "_blank");
+    }
+  }, []);
 
-        <div
-          className="calendly-inline-widget"
-          data-url={`${CALENDLY_URL}?hide_gdpr_banner=1`}
-          style={{ minWidth: 320, height: 1000, width: "100%" }}
-        />
+  return (
+    <section id="demo" className="section-black py-24 md:py-32 relative overflow-hidden">
+      {/* Subtle accent glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-accent/[0.05] rounded-full blur-[150px] pointer-events-none" />
+
+      <div className="max-w-4xl mx-auto px-6 relative z-10 text-center">
+        <ScrollReveal>
+          <p className="text-accent font-medium text-sm uppercase tracking-widest mb-4">
+            Get Started
+          </p>
+          <h2 className="font-serif text-3xl md:text-5xl text-white mb-4">
+            {BOOK_CALL.heading}
+          </h2>
+          <p className="text-white/90 text-lg md:text-xl mb-12 max-w-2xl mx-auto">
+            {BOOK_CALL.description}
+          </p>
+        </ScrollReveal>
+
+        <ScrollReveal delay={1}>
+          <Button variant="primary" size="lg" onClick={openCalendly}>
+            Book a Call
+          </Button>
+          <p className="text-white/60 text-sm mt-4">
+            30-minute walkthrough — no commitment
+          </p>
+        </ScrollReveal>
       </div>
     </section>
   );

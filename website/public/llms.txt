@@ -1,0 +1,72 @@
+# ASRE — Admission Signal Reliability Engine
+
+> One trusted encounter layer for healthcare operations.
+
+ASRE is a healthcare data infrastructure product that ingests fragmented admission signals — ADT feeds, claims, authorizations, and eligibility files — and produces a single, deduplicated, reconciled encounter table with confidence scores.
+
+## What ASRE Does
+
+ASRE replaces the brittle, custom SQL pipelines that healthcare data teams maintain to stitch encounters together. It runs inside the customer's VPC (no PHI ever leaves their infrastructure) and connects to Snowflake, BigQuery, Redshift, or PostgreSQL.
+
+### Pipeline
+
+ASRE processes data through 12 sequential stages:
+
+1. **Ingest** — Reads source tables with watermark filtering and exclusion rules
+2. **Canonicalize** — Maps diverse source schemas to a single canonical event format
+3. **Facility Normalize** — Resolves facility name variants via a 5-tier cascade: exact alias match, NPI lookup, CCN lookup, fuzzy matching, or customer-provided IDs (BYOFID)
+4. **Stitch** — Groups canonical events into encounters by patient, facility, and time window. Handles ED-to-inpatient merges, observation-to-inpatient conversions, transfer chains, and cancellation events
+5. **Deduplicate** — Removes duplicate events using configurable match fields and time tolerance, preserving audit trails
+6. **Reconcile** — Resolves cross-source conflicts for timestamps and classifications using source priority rules
+7. **Score** — Assigns weighted confidence scores (0.0-1.0) with explainable signal flags
+8. **Materialize** — Writes scored encounters to the `admission_events_unified` output table
+9. **Quality Check** — Computes per-run quality metrics and fires webhook alerts on threshold violations
+10. **Episode Stitch** — Groups related encounters into episodes using readmission windows, post-acute linkage, and ED bounceback rules
+11. **Episode Materialize** — Writes episodes to the `asre_episodes` output table
+12. **Episode Quality** — Computes episode-level quality metrics
+
+### Output Tables
+
+1. `admission_events_unified` — Primary output. Encounter-level unified view with confidence scores
+2. `asre_encounters_detail` — Event-level detail with role classifications
+3. `asre_episodes` — Episode-level groupings linking related encounters
+4. `asre_facility_registry` — Canonical facility master with aliases, NPI, CCN
+5. `asre_quality_metrics` — Per-run quality metrics with pass/warn/fail status
+6. `asre_run_metrics` — Per-stage timing, record counts, and error counts
+7. `asre_audit_log` — All pipeline modifications tracked for audit
+
+## Key Capabilities
+
+- **Encounter stitching** across ADT, claims, and authorization sources with configurable time windows
+- **Facility name resolution** via fuzzy matching, NPI/CCN registry lookup, and customer-provided IDs
+- **Cross-source reconciliation** with priority-based timestamp and classification conflict resolution
+- **Confidence scoring** with weighted signals and explainable penalty flags
+- **Episode grouping** for readmissions, transfer chains, post-acute linkage, and ED bouncebacks
+- **Config-driven onboarding** — new data sources require only a YAML config file, no code changes
+- **VPC-only deployment** — PHI never leaves customer infrastructure
+- **Webhook alerting** on quality metric threshold violations (aggregate metrics only, no PHI)
+
+## Tech Stack
+
+- Python 3.11+
+- dbt-core with warehouse-specific adapters (Snowflake, BigQuery, Redshift)
+- Pydantic for config validation
+- Docker (ECS / Cloud Run compatible)
+- YAML configuration with environment variable substitution for secrets
+
+## Who ASRE Is For
+
+- Health plans (payers) tracking admissions across multiple data sources
+- Health systems with multiple facilities and ADT feeds
+- Healthcare analytics companies building products on encounter data
+- Population health and utilization management companies
+- Any healthcare data team maintaining custom SQL encounter stitching pipelines
+
+## Deployment
+
+ASRE deploys as a Docker container in the customer's VPC. It connects to the customer's data warehouse, reads from pre-parsed source tables, and writes output tables. Typical time to first value is one day.
+
+## Links
+
+- Website: https://asre.io
+- Book a demo: https://calendly.com/wbarakat94/30min

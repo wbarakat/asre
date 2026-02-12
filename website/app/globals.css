@@ -3,10 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --color-primary: #0EA5E9;
-  --color-primary-rgb: 14, 165, 233;
-  --color-accent: #6366F1;
-  --color-accent-rgb: 99, 102, 241;
+  --color-accent: #60A5FA;
+  --color-accent-rgb: 96, 165, 250;
 }
 
 html {
@@ -14,69 +12,85 @@ html {
 }
 
 body {
-  color: #1E293B;
-  background: #FFFFFF;
+  color: rgba(255, 255, 255, 0.90);
+  background: #000000;
+}
+
+::selection {
+  background: rgba(96, 165, 250, 0.3);
+  color: #fff;
 }
 
 /* ═══════════════════════════════════════════
    Section Backgrounds
    ═══════════════════════════════════════════ */
-.section-white {
-  background: #FFFFFF;
+.section-black {
+  background: #000000;
 }
 
-.section-light {
-  background: #F8FAFC;
+.section-dark {
+  background: #0A0A0A;
 }
 
-.section-blue {
-  background: linear-gradient(135deg, #E0F2FE 0%, #F0F9FF 50%, #EEF2FF 100%);
+.section-dark-alt {
+  background: #111111;
 }
 
-.section-navy {
-  background: #0F172A;
-  color: #E2E8F0;
+.section-gradient-down {
+  background: linear-gradient(180deg, #111111 0%, #000000 100%);
+}
+
+/* ═══════════════════════════════════════════
+   Dividers
+   ═══════════════════════════════════════════ */
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.divider-accent {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(96, 165, 250, 0.3), transparent);
 }
 
 /* ═══════════════════════════════════════════
    Cards
    ═══════════════════════════════════════════ */
 @layer components {
-  .card {
-    @apply bg-white rounded-2xl border border-surface-200/80;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
+  .card-dark {
+    @apply bg-dark-300 rounded-2xl;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     transition: all 0.3s ease;
   }
 
-  .card:hover {
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06), 0 4px 10px rgba(0, 0, 0, 0.04);
+  .card-dark:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
     transform: translateY(-2px);
   }
 
-  .card-accent {
-    @apply bg-primary text-white rounded-2xl;
-    box-shadow: 0 4px 14px rgba(var(--color-primary-rgb), 0.25);
+  .card-glass {
+    @apply rounded-2xl;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
     transition: all 0.3s ease;
   }
 
-  .card-accent:hover {
-    box-shadow: 0 8px 25px rgba(var(--color-primary-rgb), 0.35);
+  .card-glass:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
     transform: translateY(-2px);
   }
 }
 
 /* ═══════════════════════════════════════════
-   Animations
+   Scroll Reveal Animations
    ═══════════════════════════════════════════ */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes slideUp {
+@keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(24px);
+    transform: translateY(30px);
   }
   to {
     opacity: 1;
@@ -84,12 +98,79 @@ body {
   }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.6s ease-out forwards;
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.animate-slide-up {
-  animation: slideUp 0.6s ease-out forwards;
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-scale {
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.reveal-scale.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.reveal-fade {
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.reveal-fade.visible {
+  opacity: 1;
+}
+
+/* Stagger delay utilities */
+.stagger-0 { transition-delay: 0ms; }
+.stagger-1 { transition-delay: 100ms; }
+.stagger-2 { transition-delay: 200ms; }
+.stagger-3 { transition-delay: 300ms; }
+.stagger-4 { transition-delay: 400ms; }
+.stagger-5 { transition-delay: 500ms; }
+.stagger-6 { transition-delay: 600ms; }
+
+/* Fallback: if JS doesn't hydrate, make everything visible */
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .reveal-scale, .reveal-fade {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* Hero load animations (not scroll-triggered) */
+.animate-fade-up {
+  animation: fadeUp 0.8s ease-out forwards;
 }
 
 .animate-delay-100 { animation-delay: 100ms; }
@@ -97,8 +178,7 @@ body {
 .animate-delay-300 { animation-delay: 300ms; }
 .animate-delay-400 { animation-delay: 400ms; }
 
-[class*="animate-slide-up"],
-[class*="animate-fade-in"] {
+[class*="animate-fade-up"] {
   opacity: 0;
 }
 
@@ -110,14 +190,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #F8FAFC;
+  background: #0A0A0A;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
+  background: #333333;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+  background: #444444;
 }

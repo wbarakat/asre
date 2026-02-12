@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 
-type ButtonVariant = "primary" | "secondary" | "white";
+type ButtonVariant = "primary" | "secondary";
 type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonBaseProps {
@@ -32,23 +32,16 @@ type ButtonProps = ButtonAsLink | ButtonAsButton;
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary: cn(
-    "bg-primary text-white",
-    "hover:bg-primary-600",
-    "active:bg-primary-700",
+    "bg-white text-black",
+    "hover:bg-white/90",
+    "active:bg-white/80",
     "shadow-sm hover:shadow-md",
     "rounded-full",
   ),
   secondary: cn(
-    "border border-surface-200 text-navy bg-white",
-    "hover:border-primary/40 hover:text-primary",
-    "active:bg-surface-50",
-    "shadow-sm",
-    "rounded-full",
-  ),
-  white: cn(
-    "bg-white text-navy",
-    "hover:bg-surface-50",
-    "shadow-sm hover:shadow-md",
+    "border border-white/30 text-white/90",
+    "hover:border-white/50 hover:text-white",
+    "active:bg-white/5",
     "rounded-full",
   ),
 };

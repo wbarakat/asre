@@ -12,7 +12,7 @@ export default function Card({ className, children, accent = false, onClick }: C
   return (
     <div
       className={cn(
-        accent ? "card-accent" : "card",
+        accent ? "card-glass" : "card-dark",
         "p-6 md:p-8",
         onClick && "cursor-pointer",
         className,
