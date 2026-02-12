@@ -130,5 +130,7 @@ export const FOOTER = {
     { label: "Whitepaper", href: "/whitepaper.pdf" },
     { label: "Documentation", href: "#" },
     { label: "GitHub", href: "#" },
+    { label: "Privacy", href: "/privacy" },
+    { label: "Terms", href: "/terms" },
   ],
 } as const;
