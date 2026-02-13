@@ -1,0 +1,80 @@
+---
+title: "Onboarding"
+description: "Go from zero to your first successful run"
+---
+
+# Onboarding
+
+Start from the minimal template and add only what you need.
+
+## 1) Copy the template
+
+```bash
+cp -R customer_config/template_minimal customer_config/<customer_id>
+```
+
+## 2) Set environment variables
+
+```bash
+export ASRE_CONFIG_PATH="$PWD/customer_config"
+export ASRE_CUSTOMER_ID="<customer_id>"
+export ASRE_LICENSE_KEY="<your_license_key>"
+export ASRE_WAREHOUSE_TYPE="postgres"  # postgres | snowflake | bigquery | redshift
+export ASRE_WAREHOUSE_CREDENTIALS="/path/to/warehouse.json"
+```
+
+Example `warehouse.json`:
+
+```json
+{
+  "host": "localhost",
+  "port": 5432,
+  "database": "asre_dev",
+  "user": "asre",
+  "password": "asre_local",
+  "schema": "public",
+  "require_utf8": true
+}
+```
+
+## 3) Configure sources
+
+Edit the files in `customer_config/<customer_id>/sources/`:
+
+- `adt.yaml`
+- `claims.yaml`
+- `auth.yaml`
+
+Only map the fields you have. Leave unused fields empty or remove them.
+
+## 4) Facility aliases (optional)
+
+ASRE ships with a bundled facility registry containing 1.8M+ US facilities from NPPES and CMS data. Most facilities will resolve automatically via NPI/CCN lookup without any configuration.
+
+You only need `facility_aliases.yaml` if you want to:
+
+- Override canonical names (e.g., use your own display names instead of NPPES names)
+- Add facilities not in the national registry (non-US, newly opened, etc.)
+- Merge multiple NPIs into a single canonical facility (hospital consolidations)
+
+If you have no aliases, keep the file valid with:
+
+```yaml
+facilities: []
+```
+
+## 5) Validate and run
+
+```bash
+# Check that all required env vars are set
+asre validate-env
+
+# Validate your YAML configuration
+asre validate-config --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+
+# Test warehouse connectivity
+asre test-connection --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID"
+
+# Run the pipeline
+asre run --config-path "$ASRE_CONFIG_PATH" --customer-id "$ASRE_CUSTOMER_ID" --mode incremental
+```

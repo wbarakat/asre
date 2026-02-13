@@ -1,0 +1,95 @@
+---
+title: "Episodes"
+description: "How ASRE groups encounters into episodes of care"
+---
+
+# Episodes
+
+ASRE groups related encounters into **episodes of care** -- longitudinal groupings that represent a patient's full care journey for a given condition or event. Episodes link readmissions, post-acute transitions, planned returns, and ED bounce-backs into a single trackable unit.
+
+Episode stitching runs as post-processing after encounters are materialized (stages 10-12). This means episodes can be recomputed independently without re-running the full encounter pipeline.
+
+---
+
+## Episode Stitching Algorithm
+
+For each patient, ASRE queries all encounters ordered by `admit_ts` and checks each encounter against prior encounters using four linkage rules:
+
+1. **Readmission:** Admit to any acute facility within `readmission_window_days` (default: 30) of a prior discharge
+2. **Post-acute linkage:** Discharge from an acute facility followed by admit to SNF, LTACH, or rehab within `post_acute_linkage_days` (default: 14)
+3. **Planned return:** Scheduled return (e.g., chemo cycle, staged surgery) within `planned_return_days` (default: 90)
+4. **ED bounce-back:** ED visit within `ed_bounceback_days` (default: 7) of a prior discharge
+
+If any rule matches, the encounter is linked to the existing episode. If no rule matches, a new episode is created. All windows are configurable per customer.
+
+---
+
+## Episode Type Classification
+
+Episode type is derived from the primary encounter (typically the first acute encounter) using a two-tier approach:
+
+1. **DRG-based rules** map DRG codes to episode types. These are configurable per customer.
+2. **AHRQ CCS ICD-10 grouper** classifies diagnosis codes into clinically meaningful categories. AHRQ CCS is free and public domain.
+
+| Episode Type | Description |
+|-------------|-------------|
+| `surgical` | DRG or procedure codes indicate a surgical encounter |
+| `medical` | Non-surgical acute admission |
+| `chronic_exacerbation` | Acute worsening of a chronic condition |
+| `maternity` | Pregnancy, labor, delivery, and postpartum |
+| `behavioral_health` | Psychiatric or substance use admissions |
+| `unclassified` | Cannot be classified by available data |
+
+The condition grouper is pluggable. Custom implementations (e.g., CMS Bundled Payment models, Prometheus) can replace the default AHRQ CCS grouper by implementing the `ConditionGrouper` interface.
+
+---
+
+## Episode Confidence Scoring
+
+Episode confidence is computed as a **weighted mean** of encounter confidence scores, where each encounter's weight is proportional to its length of stay in hours:
+
+```
+episode_confidence = sum(encounter_confidence_i * los_hours_i) / sum(los_hours_i)
+```
+
+For encounters without LOS (e.g., ED-only visits), a minimum weight of 1 hour is used.
+
+---
+
+## Episode Status
+
+| Status | Meaning |
+|--------|---------|
+| `active` | At least one encounter in the episode is still open |
+| `closed` | All encounters in the episode have been discharged |
+| `reopened` | A new encounter was linked after the episode was previously closed |
+
+---
+
+## Configuration
+
+```yaml
+episode_stitching:
+  enabled: true
+  rules:
+    readmission_window_days: 30
+    post_acute_linkage_days: 14
+    planned_return_days: 90
+    ed_bounceback_days: 7
+  condition_grouper: "ahrq_ccs"
+  episode_confidence:
+    method: "weighted_mean"
+```
+
+Set `episode_stitching.enabled: false` to skip episode processing entirely. The encounter pipeline runs normally without it.
+
+---
+
+## Why Episodes Matter
+
+Without episodes, downstream teams must build their own logic to answer questions like:
+
+- "Was this SNF admission part of the same care journey as the hip replacement last week?"
+- "Is this ED visit a bounce-back from the discharge 3 days ago?"
+
+ASRE's positioning as the reliability layer is incomplete without episode-level trust. Encounter-level trust is necessary but not sufficient -- episode-level trust is the full promise.

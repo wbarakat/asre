@@ -1,0 +1,142 @@
+---
+title: "Facility Normalization"
+description: "Aliases, fuzzy matching, NPI/CCN registries, and the facility registry"
+---
+
+# Facility Normalization
+
+Facility normalization resolves messy source facility names into stable canonical IDs. Every encounter is tagged with a `facility_canonical_id` that maps to a row in `asre_facility_registry`.
+
+---
+
+## String Normalization Pipeline
+
+Before matching, each raw facility name is cleaned through a five-step pipeline:
+
+```
+Input:  "St. Mary's Med Ctr - East Campus"
+  1. Uppercase:         "ST. MARY'S MED CTR - EAST CAMPUS"
+  2. Strip punctuation: "ST MARYS MED CTR EAST CAMPUS"
+  3. Expand abbrevs:    "ST MARYS MEDICAL CENTER EAST CAMPUS"
+  4. Remove suffixes:   "ST MARYS EAST CAMPUS"
+  5. Normalize ws:      "ST MARYS EAST CAMPUS"
+```
+
+**Important:** Directional tokens (`EAST`, `WEST`, `NORTH`, `SOUTH`) and campus tokens (`MAIN`, `DOWNTOWN`, `CAMPUS`, `MIDTOWN`, `UPTOWN`) are **preserved** -- they distinguish physically separate facilities. Only generic organizational suffixes (`HOSPITAL`, `MEDICAL CENTER`, `HEALTH SYSTEM`) are removed.
+
+### Abbreviation Dictionary
+
+| Abbreviation | Expansion |
+|-------------|-----------|
+| MED CTR | MEDICAL CENTER |
+| HOSP | HOSPITAL |
+| REG | REGIONAL |
+| MEM | MEMORIAL |
+| UNIV | UNIVERSITY |
+| GEN | GENERAL |
+| COMM | COMMUNITY |
+| CTR | CENTER |
+| HLTH | HEALTH |
+| SYS | SYSTEM |
+
+The abbreviation dictionary is configurable per customer.
+
+---
+
+## Matching Cascade
+
+After normalization, ASRE attempts to match the facility through four steps in order:
+
+1. **Exact match** on the normalized string against `asre_facility_registry.aliases`
+2. **NPI/CCN lookup** if the source includes an NPI or CCN identifier -- match directly against registry records
+3. **Fuzzy match** using token-sort ratio against all known facilities. Accepted if score >= `fuzzy_threshold` (default: 0.85). Match scores are logged for audit.
+4. **New facility** -- if no match is found, create a new facility record and flag it `FACILITY_NEW_UNREVIEWED` for human review
+
+<Note>
+Facilities created at runtime are flagged as `FACILITY_NEW_UNREVIEWED` in the registry. Use `asre facilities --unresolved` to list them and `asre facilities resolve <id>` to map them.
+</Note>
+
+---
+
+## Facility Types
+
+| Type | Description | Stale Encounter Threshold |
+|------|-------------|--------------------------|
+| `acute` | General acute care hospital | 30 days |
+| `ltach` | Long-term acute care hospital | 90 days |
+| `snf` | Skilled nursing facility | 120 days |
+| `rehab` | Inpatient rehabilitation | 60 days |
+| `psych` | Psychiatric facility | 90 days |
+| `ed_standalone` | Standalone emergency department | 3 days |
+
+Stale encounter thresholds are configurable per facility type:
+
+```yaml
+encounter_stitching:
+  stale_encounter_thresholds:
+    acute: 30
+    ed_standalone: 3
+    ltach: 90
+    snf: 120
+    rehab: 60
+    psych: 90
+    default: 30
+```
+
+If `facility_type` is unknown or unresolved, the `default` threshold applies.
+
+---
+
+## facility_aliases.yaml
+
+Define known facilities and their aliases to improve matching accuracy:
+
+```yaml
+facilities:
+  - canonical_id: "FAC_001"
+    canonical_name: "St. Mary's Medical Center"
+    npi: "1234567890"
+    ccn: "050001"
+    facility_type: "acute"
+    aliases:
+      - "ST MARY HOSP"
+      - "ST MARYS MEDICAL CTR"
+      - "SAINT MARY HOSPITAL"
+      - "ST. MARY'S MED CENTER"
+
+  - canonical_id: "FAC_002"
+    canonical_name: "Riverside Skilled Nursing"
+    npi: "0987654321"
+    facility_type: "snf"
+    aliases:
+      - "RIVERSIDE SNF"
+      - "RIVERSIDE SKILLED NURSING FACILITY"
+```
+
+If you do not have aliases yet, start with an empty list:
+
+```yaml
+facilities: []
+```
+
+---
+
+## Configuration
+
+```yaml
+facility_normalization:
+  fuzzy_threshold: 0.85
+  alias_file: "facility_aliases.yaml"
+  use_npi_registry: true
+  use_ccn_registry: true
+```
+
+### Public Registry Integration
+
+When `use_npi_registry` and `use_ccn_registry` are enabled, ASRE loads facility data from:
+
+- **NPI Registry (NPPES):** Downloaded flat file, refreshed monthly
+- **CCN Registry:** CMS Provider of Services file
+- **HIFLD:** Homeland Infrastructure Foundation-Level Data (hospital locations)
+
+These are loaded into `asre_facility_registry` during setup and refreshed on a configurable schedule.

@@ -1,0 +1,35 @@
+---
+title: "ASRE"
+description: "Admission Signal Reliability Engine - customer-facing documentation"
+---
+
+# Admission Signal Reliability Engine (ASRE)
+
+ASRE transforms ADT, claims, and auth data into a reliable, unified encounter and episode signal. It is designed to be configuration-first, idempotent, and production safe.
+
+What you get:
+
+- A normalized encounter table (`admission_events_unified`)
+- An encounter-event detail table (`asre_encounters_detail`)
+- Episode grouping for downstream workflows (`asre_episodes`)
+- Facility normalization and registry (`asre_facility_registry`)
+- Quality metrics and alerts (`asre_quality_metrics`)
+
+<Note>
+ASRE is built as a batch pipeline. It runs to completion, emits outputs, and exits. It is designed to be scheduled by your orchestration system.
+</Note>
+
+## Quick path
+
+1. Read the Getting Started Overview
+2. Complete Onboarding
+3. Run your first incremental pipeline
+
+## When to use ASRE
+
+ASRE is ideal when you need:
+
+- A single source of truth for admissions and discharges
+- Cross-source reconciliation of conflicting timestamps and classifications
+- Facility normalization across messy, inconsistent source data
+- Episode grouping across acute and post-acute settings

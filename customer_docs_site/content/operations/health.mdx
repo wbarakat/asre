@@ -1,0 +1,63 @@
+---
+title: "Health Checks"
+description: "Service health endpoints"
+---
+
+# Health Checks
+
+ASRE exposes a health endpoint for orchestration systems.
+
+- `GET /health`
+- Default port: `8080` (`ASRE_HEALTH_PORT`)
+- Bind address: `127.0.0.1` (`ASRE_HEALTH_BIND`)
+- Response `200`: healthy
+- Response `503`: failed state (last run or stage failed)
+
+Configure with:
+
+- `ASRE_HEALTH_PORT`
+- `ASRE_HEALTH_BIND`
+
+## Pre-Production Validation
+
+Use this gate before production rollout:
+
+```bash
+python3 -m mypy asre/ --strict
+python3 -m pytest tests/unit/ -v --tb=short --cov=asre --cov-fail-under=80
+python3 -m pytest tests/integration/ -v --tb=short
+python3 -m pytest tests/unit/ --snapshot-warn-unused
+```
+
+For dbt:
+
+```bash
+cd dbt_project
+dbt compile --target dev
+
+# Ensure ASRE schema objects exist
+python3 - <<'PY'
+import os
+from asre.ingest.postgres import PostgresAdapter
+from asre.migration.migrator import Migrator
+
+cfg = {
+    "host": os.environ.get("ASRE_DB_HOST", "localhost"),
+    "port": os.environ.get("ASRE_DB_PORT", "5432"),
+    "database": os.environ.get("ASRE_DB_NAME", "asre_test"),
+    "user": os.environ.get("ASRE_DB_USER", "asre_test"),
+    "password": os.environ.get("ASRE_DB_PASSWORD", "asre_test"),
+    "schema": "public",
+}
+adapter = PostgresAdapter(cfg)
+adapter.connect()
+try:
+    Migrator(adapter).run()
+finally:
+    adapter.disconnect()
+PY
+
+dbt test --target dev
+```
+
+`dbt test` requires ASRE output tables to exist in the target schema.

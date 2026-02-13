@@ -1,0 +1,31 @@
+---
+title: "Overview"
+description: "How ASRE works at a high level"
+---
+
+# Overview
+
+ASRE ingests ADT, claims, and auth feeds, canonicalizes them into a common schema, stitches encounters, reconciles conflicts, scores confidence, and materializes a clean encounter and episode dataset.
+
+## Inputs
+
+- ADT feeds (admissions, transfers, discharges)
+- Claims feeds (inpatient/outpatient claims)
+- Authorization feeds
+
+## Outputs
+
+- `admission_events_unified` -- primary encounter-level unified view
+- `asre_encounters_detail` -- event-level detail with role classifications
+- `asre_episodes` -- episode-level groupings of related encounters
+- `asre_facility_registry` -- canonical facility master with aliases
+- `asre_quality_metrics` -- per-run quality metrics with pass/warn/fail status
+- `asre_audit_log` -- all pipeline modifications tracked for audit
+- `asre_run_metrics` -- per-stage timing and throughput metrics
+
+## Core guarantees
+
+- Idempotent materialization for incremental runs
+- Deterministic ordering for ingest
+- Safe full refresh with table cleanup
+- Quality gates to prevent bad data from shipping

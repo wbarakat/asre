@@ -1,0 +1,225 @@
+---
+title: "Source Configuration"
+description: "Define your ADT, claims, and auth source feeds"
+---
+
+# Source Configuration
+
+Each source feed gets its own YAML file under `customer_config/<customer_id>/sources/`. The file defines the source table, field mappings, event type resolution rules, and optional filters.
+
+## Common Fields
+
+Every source config includes:
+
+- **`source.name`** -- Unique identifier for this feed (used in logs and `source_system` column)
+- **`source.type`** -- `adt`, `claims`, or `auth`
+- **`source.table`** -- Fully qualified table reference in the warehouse
+- **`source.incremental_key`** -- Column used for watermark filtering in incremental mode
+- **`field_mappings`** -- Maps source columns to the canonical event schema
+
+---
+
+## ADT Source
+
+ADT sources map HL7 trigger events to canonical event types using conditional rules based on the trigger code and patient class.
+
+```yaml
+# customer_config/acme_health/sources/adt_vendor_x.yaml
+
+source:
+  name: "adt_vendor_x"
+  type: "adt"
+  table: "raw.adt_messages"
+  incremental_key: "msg_timestamp"
+
+field_mappings:
+  patient_key: "member_id"
+  event_ts: "msg_timestamp"
+  event_type: "hl7_event"
+  facility_raw: "hospital_name"
+  source_record_id: "message_control_id"
+  patient_class: "patient_class_code"
+  payer_id: "insurance_plan_id"
+
+event_type_rules:
+  admit_flag: "hl7_event IN ('A01') AND patient_class_code IN ('I', 'IP')"
+  discharge_flag: "hl7_event == 'A03'"
+  event_type_map:
+    "A01":
+      default: "ADMIT"
+      when:
+        - condition: "patient_class_code IN ('O', 'OBS')"
+          then: "OBS_START"
+        - condition: "patient_class_code IN ('E', 'ED')"
+          then: "ED_ARRIVAL"
+    "A03":
+      default: "DISCHARGE"
+      when:
+        - condition: "patient_class_code IN ('E', 'ED')"
+          then: "ED_DEPARTURE"
+        - condition: "patient_class_code IN ('O', 'OBS')"
+          then: "OBS_END"
+    "A02": "TRANSFER_IN"
+    "A06": "OBS_TO_IP"
+    "A11": "CANCEL_ADMIT"
+    "A13": "CANCEL_DISCHARGE"
+
+filters:
+  exclude: "hl7_event IN ('A08', 'A31')"  # Skip demographic updates
+```
+
+### ADT Event Type Rules
+
+The `event_type_map` supports two formats:
+
+- **Simple mapping:** `"A02": "TRANSFER_IN"` -- all A02 events become TRANSFER_IN
+- **Conditional mapping:** The `when` array is evaluated in order. The first matching condition determines the event type. If no condition matches, the `default` value is used.
+
+The `admit_flag` and `discharge_flag` expressions define which events represent admissions and discharges for encounter stitching.
+
+### Supported HL7 Triggers
+
+| Trigger | Default Mapping | Notes |
+|---------|----------------|-------|
+| A01 | `ADMIT` | Conditional on patient class (OBS, ED) |
+| A02 | `TRANSFER_IN` | Transfer between units or facilities |
+| A03 | `DISCHARGE` | Conditional on patient class (ED, OBS) |
+| A04 | `ED_ARRIVAL` | ED-specific registration |
+| A06 | `OBS_TO_IP` | Observation-to-inpatient conversion |
+| A11 | `CANCEL_ADMIT` | Cancels a prior admission |
+| A13 | `CANCEL_DISCHARGE` | Cancels a prior discharge |
+
+---
+
+## Claims Source
+
+Claims sources produce **paired events** -- a single source row emits both an admit and a discharge canonical event.
+
+```yaml
+# customer_config/acme_health/sources/claims_clearinghouse.yaml
+
+source:
+  name: "claims_clearinghouse"
+  type: "claims"
+  table: "raw.institutional_claims"
+  incremental_key: "claim_received_date"
+
+field_mappings:
+  patient_key: "subscriber_id"
+  facility_raw: "billing_provider_name"
+  source_record_id: "claim_id"
+  payer_id: "payer_code"
+  drg: "drg_code"
+  principal_diagnosis: "principal_dx_code"
+  admitting_diagnosis: "admitting_dx_code"
+  diagnosis_codes: "all_dx_codes"
+
+paired_events:
+  admit:
+    event_ts: "admission_date"
+    event_type: "CLAIM_ADMIT"
+    admit_flag: true
+  discharge:
+    event_ts: "discharge_date"
+    event_type: "CLAIM_DISCHARGE"
+    discharge_flag: true
+
+patient_class_rules:
+  - condition: "bill_type_code LIKE '11%'"
+    then: "inpatient"
+  - condition: "bill_type_code LIKE '13%'"
+    then: "outpatient"
+  - condition: "bill_type_code LIKE '12%'"
+    then: "inpatient"  # hospital swing bed
+```
+
+### Paired Events
+
+The `paired_events` config tells ASRE that each source row represents a complete encounter with both an admission and a discharge. The canonicalize stage emits two canonical events per row:
+
+1. A `CLAIM_ADMIT` event using the `admission_date` as `event_ts`
+2. A `CLAIM_DISCHARGE` event using the `discharge_date` as `event_ts`
+
+Both events share the same `source_record_id` and other common fields.
+
+### Patient Class Rules
+
+The `patient_class_rules` array classifies encounters based on source-specific indicators (e.g., bill type codes). Rules are evaluated in order; the first match wins.
+
+### Diagnosis Mappings
+
+Claims sources can map three diagnosis-related fields:
+
+- **`principal_diagnosis`** -- The primary ICD-10 diagnosis code
+- **`admitting_diagnosis`** -- The admitting ICD-10 diagnosis (if available)
+- **`diagnosis_codes`** -- A JSON array or structured column containing all diagnoses with code, type, sequence, and POA (present on admission) indicators
+
+---
+
+## Auth Source
+
+Authorization sources map auth decision statuses to canonical event types.
+
+```yaml
+# customer_config/acme_health/sources/auth_portal.yaml
+
+source:
+  name: "auth_portal"
+  type: "auth"
+  table: "raw.authorization_records"
+  incremental_key: "updated_at"
+
+field_mappings:
+  patient_key: "member_number"
+  event_ts: "auth_decision_date"
+  facility_raw: "servicing_facility"
+  source_record_id: "auth_number"
+  payer_id: "plan_code"
+
+auth_status_map:
+  "A": "approved"
+  "D": "denied"
+  "P": "pending"
+  "M": "modified"
+
+event_type_rules:
+  event_type_map:
+    "approved": "AUTH_APPROVED"
+    "denied": "AUTH_DENIED"
+    "pending": "AUTH_REQUESTED"
+```
+
+### Auth Status Map
+
+The `auth_status_map` translates raw status codes from the source into normalized status values. These normalized values are then used in `event_type_rules` to determine the canonical event type.
+
+### Auth Behavior in the Pipeline
+
+Auth signals are never used as encounter anchors. During reconciliation, auth has the lowest priority for both timestamps and classification. Auth's role is validation:
+
+- Auth matching an existing encounter **boosts** the encounter's confidence score
+- Auth without a matching ADT or claims encounter is flagged `AUTH_WITHOUT_ADMIT`
+
+---
+
+## Incremental Behavior
+
+ASRE tracks per-source watermarks. Each incremental run queries:
+
+```sql
+SELECT * FROM source_table
+WHERE incremental_key > last_watermark - lookback_buffer
+```
+
+Lookback buffers are configured per source type in your global config:
+
+```yaml
+schedule:
+  lookback_buffer:
+    adt: "2h"       # ADT arrives near real-time
+    claims: "45d"   # Claims lag by weeks
+    auth: "7d"      # Auth updates trickle over days
+    default: "2h"   # Fallback for unspecified types
+```
+
+This ensures late-arriving data is captured without full reprocessing.

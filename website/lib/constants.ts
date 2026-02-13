@@ -139,7 +139,7 @@ export const FOOTER = {
   copyright: `\u00A9 ${new Date().getFullYear()} ASRE. All rights reserved.`,
   links: [
     { label: "Whitepaper", href: "/whitepaper.pdf" },
-    { label: "Documentation", href: "https://docs.asre.io" },
+    { label: "Documentation", href: "https://customerdocssite.vercel.app" },
     { label: "GitHub", href: "https://github.com/wbarakat/asre" },
     { label: "Privacy", href: "/privacy" },
     { label: "Terms", href: "/terms" },
