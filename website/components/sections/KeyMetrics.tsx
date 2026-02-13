@@ -1,33 +1,27 @@
 "use client";
 
-import { MARKET_STATS, PRODUCT_STATS } from "@/lib/constants";
+import { VALUE_METRICS } from "@/lib/constants";
 import ScrollReveal from "@/components/ui/ScrollReveal";
+import Card from "@/components/ui/Card";
 
-interface StatItem {
-  readonly value: number;
-  readonly prefix?: string;
-  readonly suffix: string;
+interface ValueMetric {
+  readonly value: string;
   readonly label: string;
-  readonly decimals?: number;
+  readonly detail: string;
 }
 
-function formatStat(stat: StatItem): string {
-  const prefix = "prefix" in stat && stat.prefix ? stat.prefix : "";
-  const decimals = "decimals" in stat && stat.decimals ? stat.decimals : 0;
-  return `${prefix}${stat.value.toFixed(decimals)}${stat.suffix}`;
-}
-
-function StatGrid({ items }: { items: readonly StatItem[] }) {
+function ValueGrid({ items }: { items: readonly ValueMetric[] }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-      {items.map((stat, i) => (
-        <ScrollReveal key={stat.label} delay={i as 0 | 1 | 2}>
-          <div className="text-center">
-            <div className="font-mono text-5xl md:text-7xl font-bold text-white">
-              {formatStat(stat)}
-            </div>
-            <p className="text-white/70 mt-2 uppercase tracking-wider text-sm">{stat.label}</p>
-          </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+      {items.map((metric, i) => (
+        <ScrollReveal key={metric.label} delay={i as 0 | 1 | 2 | 3} className="h-full">
+          <Card className="h-full">
+            <p className="font-mono text-3xl xl:text-4xl text-accent font-bold leading-[1.05] whitespace-nowrap">
+              {metric.value}
+            </p>
+            <p className="text-white mt-3 text-lg font-semibold">{metric.label}</p>
+            <p className="text-white/80 text-sm mt-2 leading-relaxed">{metric.detail}</p>
+          </Card>
         </ScrollReveal>
       ))}
     </div>
@@ -40,22 +34,16 @@ export default function KeyMetrics() {
       <div className="max-w-6xl mx-auto px-6">
         <ScrollReveal>
           <p className="text-accent font-medium text-sm uppercase tracking-widest text-center mb-4">
-            By the Numbers
+            Value
           </p>
-          <h2 className="font-serif text-3xl md:text-5xl text-white text-center mb-16">
-            Market Context
+          <h2 className="font-serif text-3xl md:text-5xl text-white text-center mb-4">
+            What Teams Usually Gain
           </h2>
+          <p className="text-white/90 text-center text-lg md:text-xl mb-16 max-w-3xl mx-auto">
+            Estimated impact ranges for time savings, data accuracy, and duplicate cleanup.
+          </p>
         </ScrollReveal>
-        <StatGrid items={MARKET_STATS} />
-
-        <div className="divider my-20" />
-
-        <ScrollReveal>
-          <h2 className="font-serif text-3xl md:text-5xl text-white text-center mb-16">
-            ASRE Performance
-          </h2>
-        </ScrollReveal>
-        <StatGrid items={PRODUCT_STATS} />
+        <ValueGrid items={VALUE_METRICS} />
       </div>
     </section>
   );

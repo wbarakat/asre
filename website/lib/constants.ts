@@ -7,7 +7,7 @@ export const BRAND = {
 } as const;
 
 export const NAV_LINKS = [
-  { label: "Features", href: "#features" },
+  { label: "Product", href: "#features" },
   { label: "Compare", href: "#compare" },
   { label: "Metrics", href: "#metrics" },
 ] as const;
@@ -18,7 +18,7 @@ export const HERO = {
   headline: "One Trusted Encounter Layer",
   highlightedPhrase: "Trusted Encounter",
   subheadline:
-    "Admission signals are scattered across ADT feeds, claims, and authorization portals. ASRE unifies them into a single, confidence-scored source of truth.",
+    "ASRE combines ADT, claims, authorization, and eligibility data into one encounter table with confidence scores and audit history.",
   ctaPrimary: "Book a Call",
   ctaSecondary: "Read the Whitepaper",
   whitepaperUrl: "/whitepaper.pdf",
@@ -26,45 +26,56 @@ export const HERO = {
 
 export const PAIN_POINTS = [
   {
-    title: "Fragmented Signals",
+    title: "Source Inputs",
     description:
-      "Every encounter touches 4+ systems with different schemas and timing. No single source tells the whole story.",
-    stat: "4+",
-    statLabel: "sources per encounter",
+      "Reads ADT, claims, authorization, and eligibility records from your warehouse tables.",
+    stat: "4",
+    statLabel: "source types",
   },
   {
-    title: "Manual Reconciliation",
+    title: "Encounter Processing",
     description:
-      "Ops teams burn hours cross-referencing systems to confirm a patient was actually admitted, when, and where.",
-    stat: "40%",
-    statLabel: "time on manual matching",
+      "Runs canonicalize, facility matching, stitching, deduplication, reconciliation, scoring, and quality checks.",
+    stat: "9",
+    statLabel: "encounter stages",
   },
   {
-    title: "Silent Data Drift",
+    title: "Episode Processing",
     description:
-      "Upstream schemas change without notice. Downstream analytics silently degrade until someone catches it.",
-    stat: "3x",
-    statLabel: "annual schema changes",
+      "Links encounters into episodes and computes episode quality metrics.",
+    stat: "3",
+    statLabel: "episode stages",
   },
   {
-    title: "Revenue Leakage",
+    title: "Output Model",
     description:
-      "Bad admission data cascades into UR, discharge planning, and network adequacy. Missed encounters cost real dollars.",
-    stat: "$17B",
-    statLabel: "lost to denied claims yearly",
+      "Writes unified encounters, detail, episodes, facility registry, quality metrics, run metrics, and audit logs.",
+    stat: "7",
+    statLabel: "output tables",
   },
 ] as const;
 
-export const MARKET_STATS = [
-  { value: 5.3, prefix: "$", suffix: "T", label: "US Healthcare Spending" },
-  { value: 34.4, suffix: "M", label: "Annual Inpatient Admissions" },
-  { value: 53, suffix: "M", label: "Prior Authorizations Annually" },
-] as const;
-
-export const PRODUCT_STATS = [
-  { value: 12, suffix: "", label: "Pipeline Stages" },
-  { value: 0.97, suffix: "", label: "Confidence Score Ceiling", decimals: 2 },
-  { value: 93, suffix: "%", label: "Duplicate Reduction" },
+export const VALUE_METRICS = [
+  {
+    value: "~8 hrs/wk",
+    label: "Time saved per analyst",
+    detail: "Less manual cross-checking across ADT, claims, and authorization data.",
+  },
+  {
+    value: "~20%",
+    label: "Higher encounter accuracy",
+    detail: "Fewer mismatched admits and discharges after reconciliation.",
+  },
+  {
+    value: "~80%",
+    label: "Fewer duplicate events",
+    detail: "Duplicate signals are removed before they hit downstream reporting.",
+  },
+  {
+    value: "~50%",
+    label: "Less manual QA",
+    detail: "Teams review flagged exceptions instead of reviewing every encounter.",
+  },
 ] as const;
 
 export const COMPARISON_ROWS = [

@@ -11,20 +11,20 @@ export default function PainPoints() {
       <div className="max-w-7xl mx-auto px-6">
         <ScrollReveal>
           <p className="text-accent font-medium text-sm uppercase tracking-widest text-center mb-4">
-            The Problem
+            Product
           </p>
           <h2 className="font-serif text-3xl md:text-5xl text-white text-center mb-4">
-            The Reliability Challenge
+            What ASRE Does
           </h2>
           <p className="text-white/90 text-center text-lg md:text-xl mb-16 max-w-2xl mx-auto">
-            Why healthcare operations can&apos;t rely on raw admission signals
+            Clear encounter outputs from mixed source data
           </p>
         </ScrollReveal>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
           {PAIN_POINTS.map((point, i) => (
-            <ScrollReveal key={point.title} delay={i as 0 | 1 | 2 | 3}>
-              <Card>
+            <ScrollReveal key={point.title} delay={i as 0 | 1 | 2 | 3} className="h-full">
+              <Card className="h-full">
                 <div className="font-mono text-3xl md:text-4xl text-accent font-bold">
                   {point.stat}
                 </div>

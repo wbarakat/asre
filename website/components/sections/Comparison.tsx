@@ -43,10 +43,10 @@ export default function Comparison() {
             Why ASRE
           </p>
           <h2 className="font-serif text-3xl md:text-5xl text-white text-center mb-4">
-            Stop Maintaining Brittle SQL
+            Replace Encounter SQL with a Fixed Pipeline
           </h2>
           <p className="text-white/90 text-center text-lg md:text-xl mb-16 max-w-2xl mx-auto">
-            Most teams stitch encounters with custom SQL that breaks on every schema change. ASRE replaces months of fragile pipeline work with config.
+            Teams often maintain custom SQL for encounter stitching. ASRE provides one defined pipeline for stitching, deduplication, reconciliation, and scoring.
           </p>
         </ScrollReveal>
 
@@ -113,16 +113,6 @@ export default function Comparison() {
           ))}
         </div>
 
-        {/* Bottom stat */}
-        <ScrollReveal>
-          <div className="mt-12 text-center">
-            <p className="text-white/90 text-base">
-              Average time to deploy:{" "}
-              <span className="text-white font-semibold">3-6 months</span> (DIY) vs{" "}
-              <span className="text-accent font-bold">1 day</span> (ASRE)
-            </p>
-          </div>
-        </ScrollReveal>
       </div>
     </section>
   );
